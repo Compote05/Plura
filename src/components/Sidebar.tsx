@@ -166,7 +166,7 @@ export default function Sidebar() {
                 <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground shrink-0 border border-white/5">
                     <LayoutGrid size={18} />
                 </div>
-                {!isCollapsed && <h1 className="text-[15px] font-semibold tracking-tight text-sidebar-foreground">Plura</h1>}
+                {!isCollapsed && <h1 className="text-[15px] font-semibold tracking-tight text-sidebar-foreground">AI.HUB</h1>}
             </ div>
 
             {/* Navigation */}

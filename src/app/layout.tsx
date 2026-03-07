@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Plura - All-in-One AI Platform",
+  title: "AIHub - All-in-One AI Platform",
   description: "A premium, unified interface for Chat and Image Generation.",
 };
 

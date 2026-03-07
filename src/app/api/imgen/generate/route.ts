@@ -37,7 +37,8 @@ export async function POST(req: Request) {
         const { prompt: userPrompt, aspectRatio } = await req.json();
 
         // Check if workflow file exists
-        const workflowPath = path.join(process.cwd(), 'public/workflows/imgen/flux-2.json');
+        // const workflowPath = path.join(process.cwd(), 'public/workflows/imgen/flux-2.json');
+        const workflowPath = path.join(process.cwd(), 'public/workflows/imgen/z-image.json');
         if (!fs.existsSync(workflowPath)) {
             return NextResponse.json({ error: "Workflow file missing" }, { status: 500 });
         }
@@ -45,26 +46,38 @@ export async function POST(req: Request) {
         const workflowData = fs.readFileSync(workflowPath, 'utf8');
         const workflow = JSON.parse(workflowData);
 
-        // Modify Prompt
-        workflow["20"].inputs.text = userPrompt;
-
-        // Modify Seed
-        workflow["13"].inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
-
         // Modify Dimensions based on aspect ratio
-        let width = 512;
-        let height = 512;
+        let width = 1024;
+        let height = 1024;
 
         if (aspectRatio === "landscape") {
-            width = 672;
-            height = 384; // SDXL/Flux ideal landscape size
+            width = 1216;
+            height = 832;
         } else if (aspectRatio === "vertical") {
-            width = 384;
-            height = 672; // vertical size
+            width = 832;
+            height = 1216;
         }
 
-        workflow["11"].inputs.value = width;
-        workflow["12"].inputs.value = height;
+        // ============== Flux Klein ==============
+        // Modify Prompt
+        // workflow["12"].inputs.text = userPrompt;
+
+        // Modify Seed
+        // workflow["3"].inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
+
+        // workflow["7"].inputs.value = width;
+        // workflow["8"].inputs.value = height;
+
+        // ============ Z Image Turbo =============
+        // Modify Prompt
+        workflow["5"].inputs.text = userPrompt;
+
+        // Modify Seed
+        workflow["8"].inputs.seed = Math.floor(Math.random() * 9007199254740991);
+
+        workflow["6"].inputs.width = width;
+        workflow["6"].inputs.height = height;
+
 
         // Send to ComfyUI
         const response = await fetch(`${COMFY_URL}/prompt`, {
@@ -73,7 +86,7 @@ export async function POST(req: Request) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                client_id: "plura_client_" + Date.now(),
+                client_id: "aihub_client_" + Date.now(),
                 prompt: workflow
             }),
         });

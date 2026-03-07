@@ -42,7 +42,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                         </button>
 
                         <div className="mb-8 text-center">
-                            <h2 className="text-2xl font-bold text-white mb-2">Welcome to Plura</h2>
+                            <h2 className="text-2xl font-bold text-white mb-2">Welcome to AI.HUB</h2>
                             <p className="text-sm text-white/50">
                                 Sign in to sync your threads and unlock full access.
                             </p>

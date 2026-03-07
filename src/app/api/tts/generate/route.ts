@@ -70,7 +70,7 @@ export async function POST(req: Request) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                client_id: "plura_tts_client_" + Date.now(),
+                client_id: "aihub_tts_client_" + Date.now(),
                 prompt: workflow
             }),
         });
