@@ -1,0 +1,520 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { MessageSquare, Image as ImageIcon, Settings, LayoutGrid, Library, PanelLeftClose, User as UserIcon, MoreVertical, Edit2, Copy as CopyIcon, Trash2, AudioLines } from "lucide-react";
+import { User } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { useAppContext } from "@/context/AppContext";
+import { usePathname, useRouter } from "next/navigation";
+import useSWR from "swr";
+
+interface Thread {
+    id: string;
+    title: string;
+    created_at: string;
+}
+
+export default function Sidebar() {
+    const {
+        user,
+        activeThreadId,
+        setActiveThreadId: onThreadSelect,
+        renamedThread,
+        setIsAuthModalOpen,
+        setIsSettingsModalOpen
+    } = useAppContext();
+
+    const openAuthModal = () => setIsAuthModalOpen(true);
+    const openSettingsModal = () => setIsSettingsModalOpen(true);
+
+    const pathname = usePathname();
+    const router = useRouter();
+
+    let activeTab: "chat" | "image" | "library" | "tts" = "chat";
+    if (pathname.includes("/generate")) activeTab = "image";
+    else if (pathname.includes("/library")) activeTab = "library";
+    else if (pathname.includes("/tts")) activeTab = "tts";
+
+    const onTabChange = (tab: "chat" | "image" | "library" | "tts") => {
+        if (tab === "chat") router.push("/chat");
+        if (tab === "image") router.push("/generate");
+        if (tab === "library") router.push("/library");
+        if (tab === "tts") router.push("/tts");
+    };
+    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+    const [editTitle, setEditTitle] = useState("");
+
+    const fetcher = async ([_, userId, tab]: [string, string, string]) => {
+        if (tab === "library") return [];
+
+        let query = supabase
+            .from('threads')
+            .select('id, title, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
+
+        if (tab === "image") {
+            query = query.eq('model', 'image-generation');
+        } else if (tab === "tts") {
+            query = query.eq('model', 'text-to-speech');
+        } else if (tab === "chat") {
+            query = query.neq('model', 'image-generation').neq('model', 'text-to-speech');
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        return data as Thread[];
+    };
+
+    const { data: threadsData, mutate } = useSWR(
+        user ? ['threads', user.id, activeTab] : null,
+        fetcher,
+        { fallbackData: [] }
+    );
+
+    const threads = threadsData || [];
+
+    // Listen for auto-generated title updates from the ChatArea
+    useEffect(() => {
+        if (renamedThread) {
+            mutate((prev) =>
+                (prev || []).map(t =>
+                    t.id === renamedThread.id ? { ...t, title: renamedThread.title } : t
+                ),
+                { revalidate: false }
+            );
+        }
+    }, [renamedThread, mutate]);
+
+    const handleRename = async (id: string, newTitle: string) => {
+        if (!newTitle.trim() || !user) return;
+
+        // Optimistic update
+        mutate(
+            (prev) => (prev || []).map(t => t.id === id ? { ...t, title: newTitle.trim() } : t),
+            { revalidate: false }
+        );
+
+        await supabase.from('threads').update({ title: newTitle.trim() }).eq('id', id).eq('user_id', user.id);
+        setEditingThreadId(null);
+        mutate(); // Revalidate to ensure consistency
+    };
+
+    const handleClone = async (thread: Thread) => {
+        if (!user) return;
+
+        // Fetch full thread to clone messages and model
+        const { data: fullThread } = await supabase.from('threads').select('*').eq('id', thread.id).single();
+        if (!fullThread) return;
+
+        const { data: newThread } = await supabase.from('threads').insert([{
+            user_id: user.id,
+            title: `${fullThread.title} (Copy)`,
+            model: fullThread.model,
+            messages: fullThread.messages
+        }]).select().single();
+
+        if (newThread) {
+            mutate(
+                (prev) => [{ id: newThread.id, title: newThread.title, created_at: newThread.created_at }, ...(prev || [])],
+                { revalidate: false }
+            );
+
+            // Stay within the correct tab context
+            if (fullThread.model === 'image-generation') {
+                onTabChange("image");
+            } else if (fullThread.model === 'text-to-speech') {
+                onTabChange("tts");
+            } else {
+                onTabChange("chat");
+            }
+            onThreadSelect(newThread.id);
+        }
+    };
+
+    const handleDelete = async (id: string) => {
+        if (!user) return;
+
+        // Optimistic update
+        mutate(
+            (prev) => (prev || []).filter(t => t.id !== id),
+            { revalidate: false }
+        );
+
+        await supabase.from('threads').delete().eq('id', id).eq('user_id', user.id);
+        if (activeThreadId === id) {
+            onThreadSelect(null);
+        }
+        mutate(); // Revalidate after deletion
+    };
+
+
+    return (
+        <aside
+            className={cn(
+                "h-full flex flex-col bg-sidebar border-r border-sidebar-border text-sidebar-foreground py-4 shrink-0 transition-all duration-300 ease-in-out relative z-20 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.5)]",
+                isCollapsed ? "w-[72px]" : "w-[260px]"
+            )}
+        >
+            {/* Header */}
+            < div className={cn("flex items-center mb-6 mt-1", isCollapsed ? "justify-center px-0" : "px-4 gap-3")} >
+                <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground shrink-0 border border-white/5">
+                    <LayoutGrid size={18} />
+                </div>
+                {!isCollapsed && <h1 className="text-[15px] font-semibold tracking-tight text-sidebar-foreground">Plura</h1>}
+            </ div>
+
+            {/* Navigation */}
+            <div className="flex flex-col gap-1 px-3">
+                {!isCollapsed && <p className="px-3 text-[11px] font-bold text-white/30 mb-2 tracking-[0.15em] uppercase">Modes</p>}
+
+                <button
+                    onClick={() => {
+                        onTabChange("chat");
+                        onThreadSelect(null);
+                    }}
+                    title="Chat"
+                    className={cn(
+                        "flex items-center transition-all duration-200 group relative",
+                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
+                        activeTab === "chat" && activeThreadId === null
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    )}
+                >
+                    {(activeTab === "chat" && activeThreadId === null && !isCollapsed) && (
+                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
+                    )}
+                    <MessageSquare size={isCollapsed ? 20 : 16} className={(activeTab === "chat" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
+                    <AnimatePresence>
+                        {!isCollapsed && (
+                            <motion.span
+                                initial={{ opacity: 0, width: 0 }}
+                                animate={{ opacity: 1, width: "auto" }}
+                                exit={{ opacity: 0, width: 0 }}
+                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                            >
+                                Chat
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                </button>
+
+                <button
+                    onClick={() => {
+                        onTabChange("image");
+                        onThreadSelect(null);
+                    }}
+                    title="Image Generation"
+                    className={cn(
+                        "flex items-center transition-all duration-200 group relative",
+                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
+                        activeTab === "image" && activeThreadId === null
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    )}
+                >
+                    {(activeTab === "image" && activeThreadId === null && !isCollapsed) && (
+                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
+                    )}
+                    <ImageIcon size={isCollapsed ? 20 : 16} className={(activeTab === "image" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
+                    <AnimatePresence>
+                        {!isCollapsed && (
+                            <motion.span
+                                initial={{ opacity: 0, width: 0 }}
+                                animate={{ opacity: 1, width: "auto" }}
+                                exit={{ opacity: 0, width: 0 }}
+                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                            >
+                                Image Generation
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                </button>
+
+                <button
+                    onClick={() => {
+                        onTabChange("tts");
+                        onThreadSelect(null);
+                    }}
+                    title="Audio Studio"
+                    className={cn(
+                        "flex items-center transition-all duration-200 group relative",
+                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
+                        activeTab === "tts" && activeThreadId === null
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    )}
+                >
+                    {(activeTab === "tts" && activeThreadId === null && !isCollapsed) && (
+                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
+                    )}
+                    <AudioLines size={isCollapsed ? 20 : 16} className={(activeTab === "tts" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
+                    <AnimatePresence>
+                        {!isCollapsed && (
+                            <motion.span
+                                initial={{ opacity: 0, width: 0 }}
+                                animate={{ opacity: 1, width: "auto" }}
+                                exit={{ opacity: 0, width: 0 }}
+                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                            >
+                                Audio Studio
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                </button>
+
+                <button
+                    onClick={() => onTabChange("library")}
+                    title="Library"
+                    className={cn(
+                        "flex items-center transition-all duration-200 group relative",
+                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
+                        activeTab === "library"
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    )}
+                >
+                    {(activeTab === "library" && !isCollapsed) && (
+                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
+                    )}
+                    <Library size={isCollapsed ? 20 : 16} className={activeTab === "library" ? "opacity-100" : "opacity-70"} />
+                    <AnimatePresence>
+                        {!isCollapsed && (
+                            <motion.span
+                                initial={{ opacity: 0, width: 0 }}
+                                animate={{ opacity: 1, width: "auto" }}
+                                exit={{ opacity: 0, width: 0 }}
+                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                            >
+                                Library
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                </button>
+            </div>
+
+            {/* History Area */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pt-2 px-3 custom-scrollbar">
+                {!isCollapsed && (
+                    <div className="flex flex-col gap-[1px]">
+                        <div className="flex items-center justify-between px-2 mb-1 mt-1">
+                            <p className="text-[10px] font-bold text-white/30 tracking-[0.16em] uppercase">
+                                {activeTab === 'chat' && "Chat History"}
+                                {activeTab === 'image' && "Image History"}
+                                {activeTab === 'tts' && "Audio History"}
+                                {activeTab === 'library' && "History"}
+                            </p>
+                        </div>
+                        {threads.map((thread) => (
+                            <div
+                                key={thread.id}
+                                className={cn(
+                                    "relative group px-3 py-1 rounded-md text-[13px] transition-colors cursor-pointer flex items-center justify-between mx-1",
+                                    (activeThreadId === thread.id)
+                                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+                                        : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                                )}
+                            >
+                                {editingThreadId === thread.id ? (
+                                    <input
+                                        autoFocus
+                                        value={editTitle}
+                                        onChange={(e) => setEditTitle(e.target.value)}
+                                        onBlur={() => handleRename(thread.id, editTitle)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleRename(thread.id, editTitle);
+                                            if (e.key === 'Escape') setEditingThreadId(null);
+                                        }}
+                                        className="bg-transparent border-none outline-none w-full text-white"
+                                    />
+                                ) : (
+                                    <div
+                                        className="relative truncate w-full pr-2"
+                                        onClick={() => {
+                                            // The tab logic doesn't need to change if we only show relevant threads
+                                            onThreadSelect(thread.id);
+                                        }}
+                                    >
+                                        <AnimatePresence mode="wait">
+                                            <motion.span
+                                                key={thread.title}
+                                                initial={{ opacity: 0, y: 5 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -5 }}
+                                                transition={{ duration: 0.2 }}
+                                                className="absolute inset-0 truncate flex items-center"
+                                            >
+                                                {thread.title}
+                                            </motion.span>
+                                        </AnimatePresence>
+                                        {/* Invisible duplicate to maintain layout height while animating absolutely positioned text */}
+                                        <span className="invisible block pointer-events-none truncate">{thread.title}</span>
+                                    </div>
+                                )}
+
+                                {/* Hover Actions Menu */}
+                                {editingThreadId !== thread.id && (
+                                    <div className="flex-shrink-0 relative">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setOpenMenuId(openMenuId === thread.id ? null : thread.id);
+                                            }}
+                                            className={cn(
+                                                "p-1 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-opacity",
+                                                openMenuId === thread.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                            )}
+                                        >
+                                            <MoreVertical size={13} />
+                                        </button>
+
+                                        <AnimatePresence>
+                                            {openMenuId === thread.id && (
+                                                <>
+                                                    <div
+                                                        className="fixed inset-0 z-40"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                        }}
+                                                    />
+                                                    <motion.div
+                                                        initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                                        exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                                                        className="absolute right-0 top-full mt-1 w-36 bg-[#0a0c12] border border-[#1a1d29] rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.8)] z-50 overflow-hidden py-1"
+                                                    >
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setEditingThreadId(thread.id);
+                                                                setEditTitle(thread.title);
+                                                                setOpenMenuId(null);
+                                                            }}
+                                                            className="w-full text-left px-3 py-1.5 text-xs text-white/70 hover:text-white hover:bg-white/5 flex items-center gap-2"
+                                                        >
+                                                            <Edit2 size={12} /> Rename
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleClone(thread);
+                                                                setOpenMenuId(null);
+                                                            }}
+                                                            className="w-full text-left px-3 py-1.5 text-xs text-white/70 hover:text-white hover:bg-white/5 flex items-center gap-2"
+                                                        >
+                                                            <CopyIcon size={12} /> Clone
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDelete(thread.id);
+                                                                setOpenMenuId(null);
+                                                            }}
+                                                            className="w-full text-left px-3 py-1.5 text-xs text-red-500/70 hover:text-red-500 hover:bg-red-500/10 flex items-center gap-2"
+                                                        >
+                                                            <Trash2 size={12} /> Delete
+                                                        </button>
+                                                    </motion.div>
+                                                </>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Footer Items */}
+            <div className="mt-auto px-3 pb-4 flex flex-col gap-2 relative">
+                <AnimatePresence>
+                    {isProfileOpen && !isCollapsed && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute bottom-full left-3 right-3 mb-2 bg-popover border border-border rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.5)] z-50 overflow-hidden"
+                        >
+                            {user && !user.is_anonymous ? (
+                                <button
+                                    onClick={openSettingsModal}
+                                    className="flex items-center gap-3 w-full p-3 text-sm font-medium text-popover-foreground/70 hover:text-popover-foreground hover:bg-accent transition-colors"
+                                >
+                                    <Settings size={16} />
+                                    Settings
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={openAuthModal}
+                                    className="flex items-center gap-3 w-full p-3 text-sm font-medium text-popover-foreground/70 hover:text-popover-foreground hover:bg-accent transition-colors"
+                                >
+                                    <UserIcon size={16} />
+                                    Sign In / Register
+                                </button>
+                            )}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <div className={cn(
+                    "flex items-center",
+                    isCollapsed ? "flex-col gap-4" : "justify-between"
+                )}>
+                    <button
+                        onClick={() => {
+                            if (isCollapsed) {
+                                setIsCollapsed(false);
+                            } else {
+                                setIsProfileOpen(!isProfileOpen);
+                            }
+                        }}
+                        className={cn(
+                            "flex items-center transition-all p-1.5 rounded-lg hover:bg-sidebar-accent overflow-hidden mx-1",
+                            !isCollapsed && "flex-1"
+                        )}
+                    >
+                        <div className={cn(
+                            "w-8 h-8 rounded-full flex items-center justify-center shrink-0 border border-white/5",
+                            user && !user.is_anonymous ? "bg-primary" : "bg-sidebar-accent"
+                        )}>
+                            <UserIcon size={16} className="text-primary-foreground" />
+                        </div>
+                        <AnimatePresence>
+                            {!isCollapsed && (
+                                <motion.div
+                                    initial={{ opacity: 0, width: 0 }}
+                                    animate={{ opacity: 1, width: "auto" }}
+                                    exit={{ opacity: 0, width: 0 }}
+                                    className="ml-3 text-left whitespace-nowrap overflow-hidden"
+                                >
+                                    <p className="text-sm font-medium text-white">
+                                        {user && !user.is_anonymous
+                                            ? (user.user_metadata?.full_name || user.email?.split('@')[0] || "User")
+                                            : "Sign in"}
+                                    </p>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </button>
+
+                    <button
+                        onClick={() => setIsCollapsed(!isCollapsed)}
+                        className="p-1.5 text-sidebar-foreground/40 hover:text-sidebar-foreground hover:bg-sidebar-accent rounded-lg transition-colors shrink-0 mr-1"
+                    >
+                        <motion.div animate={{ rotate: isCollapsed ? 180 : 0 }} transition={{ duration: 0.3 }}>
+                            <PanelLeftClose size={16} />
+                        </motion.div>
+                    </button>
+                </div>
+            </div>
+        </aside>
+    );
+}

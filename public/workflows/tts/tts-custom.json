@@ -1,0 +1,37 @@
+{
+  "1": {
+    "inputs": {
+      "text": "",
+      "instruct": "Male voice, 35–45 years old.\n\nMedium pitch, slightly warm tone.\nSmooth, balanced, and easy to listen to.\n\nModerate speaking pace.\nClear articulation.\n\nCalm, friendly, and neutral.\nConfident without sounding dominant.\n\nOverall: pleasant, modern, versatile French male voice suitable for general use.",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "language": "French",
+      "seed": 431576183470923,
+      "max_new_tokens": 2048,
+      "top_p": 0.8,
+      "top_k": 20,
+      "temperature": 1,
+      "repetition_penalty": 1.05,
+      "attention": "sdpa",
+      "unload_model_after_generate": false
+    },
+    "class_type": "FB_Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "🎨 Qwen3-TTS VoiceDesign"
+    }
+  },
+  "2": {
+    "inputs": {
+      "audioUI": "",
+      "audio": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "PreviewAudio",
+    "_meta": {
+      "title": "Preview Audio"
+    }
+  }
+}
