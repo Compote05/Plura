@@ -9,14 +9,19 @@ import { cn } from "@/lib/utils";
 import { useAppContext } from "@/context/AppContext";
 import ImageViewer from "./ImageViewer";
 
+
 interface MessageVariation {
-    status?: "generating" | "done" | "error";
+    status?: "generating" | "done" | "error" | "deleted";
     imageUrl?: string;
     metadata?: {
         model: string;
         seed: number | string;
         aspectRatio: string;
         steps: number;
+        cfgScale?: number;
+        sampler?: string;
+        width?: number;
+        height?: number;
         time: number;
     };
 }
@@ -25,7 +30,7 @@ interface Message {
     id: string;
     role: "user" | "assistant";
     content: string;
-    status?: "generating" | "done" | "error";
+    status?: "generating" | "done" | "error" | "deleted";
     imageUrl?: string;
     metadata?: MessageVariation['metadata'];
     variations?: MessageVariation[];
@@ -123,7 +128,7 @@ export default function ImageArea({ user }: { user: User | null }) {
         await supabase.from('threads').update({ messages: updatedMessages }).eq('id', threadId).eq('user_id', user.id);
     };
 
-    const handleGenerate = async (e?: React.FormEvent, msgIdToRegenerate?: string, overridePrompt?: string) => {
+    const handleGenerate = async (e?: React.FormEvent, msgIdToRegenerate?: string, overridePrompt?: string, overrideParams?: { aspectRatio?: string; steps?: number; cfgScale?: number; sampler?: string; width?: number; height?: number; seed?: number }) => {
         if (e) e.preventDefault();
         const currentPrompt = overridePrompt || prompt;
         if (!currentPrompt.trim() || isGenerating) return;
@@ -140,7 +145,13 @@ export default function ImageArea({ user }: { user: User | null }) {
         }
         setLastUsedMode("image_generation");
 
-        const reqSeed = advancedSettings.seed === -1 ? Math.floor(Math.random() * 1000000000) : advancedSettings.seed;
+        const effectiveAspectRatio = (overrideParams?.aspectRatio as typeof aspectRatio) ?? aspectRatio;
+        const effectiveSteps = overrideParams?.steps ?? advancedSettings.steps;
+        const effectiveCfg = overrideParams?.cfgScale ?? advancedSettings.cfgScale;
+        const effectiveSampler = overrideParams?.sampler ?? advancedSettings.sampler;
+        const effectiveWidth = overrideParams?.width ?? advancedSettings.width;
+        const effectiveHeight = overrideParams?.height ?? advancedSettings.height;
+        const reqSeed = Math.floor(Math.random() * 1000000000);
 
         let newMessagesState: Message[];
         let asstMsgId: string;
@@ -182,14 +193,14 @@ export default function ImageArea({ user }: { user: User | null }) {
                 headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
                 body: JSON.stringify({
                     prompt: currentPrompt,
-                    aspectRatio,
-                    ...(useAdvanced ? {
-                        steps: advancedSettings.steps,
+                    aspectRatio: effectiveAspectRatio,
+                    ...(useAdvanced || overrideParams ? {
+                        steps: effectiveSteps,
                         seed: reqSeed,
-                        sampler: advancedSettings.sampler,
-                        cfgScale: advancedSettings.cfgScale,
-                            width: advancedSettings.width,
-                        height: advancedSettings.height,
+                        sampler: effectiveSampler,
+                        cfgScale: effectiveCfg,
+                        width: effectiveWidth,
+                        height: effectiveHeight,
                     } : {})
                 })
             });
@@ -206,7 +217,7 @@ export default function ImageArea({ user }: { user: User | null }) {
                 else if (sd.status === 'error') throw new Error(sd.error || "Generation error");
             }
 
-            const metadata = { model: "Flux.1", seed: reqSeed, aspectRatio, steps: advancedSettings.steps, time: parseFloat(((Date.now() - startTime) / 1000).toFixed(1)) };
+            const metadata = { model: "Flux.1", seed: reqSeed, aspectRatio: effectiveAspectRatio, steps: effectiveSteps, cfgScale: effectiveCfg, sampler: effectiveSampler, width: effectiveWidth, height: effectiveHeight, time: parseFloat(((Date.now() - startTime) / 1000).toFixed(1)) };
 
             let messagesAfterGen = newMessagesState.map((msg): Message => {
                 if (msg.id !== asstMsgId) return msg;
@@ -345,6 +356,14 @@ export default function ImageArea({ user }: { user: User | null }) {
                                                     <span className="text-xs text-red-400/50">Failed</span>
                                                 </div>
                                             )}
+                                            {currentVar.status === "deleted" && (
+                                                <div className={cn(
+                                                    "w-full bg-foreground/[0.02] border-dashed flex items-center justify-center gap-2",
+                                                    currentVar.metadata?.aspectRatio === "landscape" ? "aspect-video" : currentVar.metadata?.aspectRatio === "vertical" ? "aspect-[9/16]" : "aspect-square"
+                                                )}>
+                                                    <span className="text-xs text-foreground/25">Deleted image</span>
+                                                </div>
+                                            )}
                                             {currentVar.status === "done" && currentVar.imageUrl && (
                                                 // eslint-disable-next-line @next/next/no-img-element
                                                 <img
@@ -361,7 +380,7 @@ export default function ImageArea({ user }: { user: User | null }) {
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-1">
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); handleGenerate(undefined, msg.id, entryPrompt); }}
+                                                        onClick={(e) => { e.stopPropagation(); handleGenerate(undefined, msg.id, entryPrompt, currentVar.metadata ? { aspectRatio: currentVar.metadata.aspectRatio, steps: currentVar.metadata.steps, cfgScale: currentVar.metadata.cfgScale, sampler: currentVar.metadata.sampler, width: currentVar.metadata.width, height: currentVar.metadata.height } : undefined); }}
                                                         className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-foreground/35 hover:text-foreground/65 hover:bg-accent transition-colors"
                                                     >
                                                         <RotateCw size={11} /> Retry
@@ -426,6 +445,10 @@ export default function ImageArea({ user }: { user: User | null }) {
                                     ) : v.status === "generating" ? (
                                         <div className="w-full h-full bg-foreground/5 flex items-center justify-center">
                                             <div className="w-3 h-3 rounded-full border border-foreground/30 border-t-foreground/60 animate-spin" />
+                                        </div>
+                                    ) : v.status === "deleted" ? (
+                                        <div className="w-full h-full bg-foreground/[0.02] flex items-center justify-center">
+                                            <ImageIcon size={12} className="text-foreground/15" />
                                         </div>
                                     ) : (
                                         <div className="w-full h-full bg-foreground/5 flex items-center justify-center">

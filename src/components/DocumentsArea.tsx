@@ -86,6 +86,45 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
         await supabase.storage.from("library").remove([item.storage_path]);
         await supabase.from(item.type === "image" ? "images" : "audio").delete().eq("id", item.id);
         setGeneratedItems(prev => prev.filter(i => i.id !== item.id));
+
+        // Mark as deleted in all image generation threads
+        if (item.type === "image") {
+            const apiPath = '/api/library/' + item.storage_path.split('/').slice(1).join('/');
+            const fileName = item.storage_path.split('/').pop()!;
+            const { data: threads } = await supabase
+                .from('threads')
+                .select('id, messages')
+                .eq('user_id', user.id)
+                .eq('session_type', 'image_generation');
+
+            for (const thread of threads || []) {
+                let changed = false;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const updatedMessages = (thread.messages || []).map((msg: any) => {
+                    if (msg.role !== 'assistant') return msg;
+                    const matchUrl = (url: string | undefined) => url && (url === apiPath || url.includes(apiPath) || url.includes(fileName));
+                    if (matchUrl(msg.imageUrl)) {
+                        changed = true;
+                        return { ...msg, status: 'deleted', imageUrl: undefined };
+                    }
+                    if (msg.variations) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const newVariations = msg.variations.map((v: any) =>
+                            matchUrl(v.imageUrl) ? { ...v, status: 'deleted', imageUrl: undefined } : v
+                        );
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        if (newVariations.some((v: any, i: number) => v !== msg.variations[i])) {
+                            changed = true;
+                            return { ...msg, variations: newVariations };
+                        }
+                    }
+                    return msg;
+                });
+                if (changed) {
+                    await supabase.from('threads').update({ messages: updatedMessages }).eq('id', thread.id);
+                }
+            }
+        }
     };
 
     const handleDeleteDocument = async (doc: DatabaseDocument) => {
