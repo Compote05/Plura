@@ -34,10 +34,17 @@ export async function POST(req: Request) {
     }
 
     try {
-        const { prompt: userPrompt, aspectRatio } = await req.json();
+        const {
+            prompt: userPrompt,
+            aspectRatio,
+            steps,
+            seed,
+            sampler,
+            cfgScale,
+            width: customWidth,
+            height: customHeight,
+        } = await req.json();
 
-        // Check if workflow file exists
-        // const workflowPath = path.join(process.cwd(), 'public/workflows/imgen/flux-2.json');
         const workflowPath = path.join(process.cwd(), 'public/workflows/imgen/z-image.json');
         if (!fs.existsSync(workflowPath)) {
             return NextResponse.json({ error: "Workflow file missing" }, { status: 500 });
@@ -46,35 +53,29 @@ export async function POST(req: Request) {
         const workflowData = fs.readFileSync(workflowPath, 'utf8');
         const workflow = JSON.parse(workflowData);
 
-        // Modify Dimensions based on aspect ratio
+        // Dimensions: custom > aspect ratio > default square
         let width = 1024;
         let height = 1024;
 
-        if (aspectRatio === "landscape") {
-            width = 1216;
-            height = 832;
+        if (customWidth && customHeight) {
+            width = Math.min(2048, Math.max(256, customWidth));
+            height = Math.min(2048, Math.max(256, customHeight));
+        } else if (aspectRatio === "landscape") {
+            width = 1216; height = 832;
         } else if (aspectRatio === "vertical") {
-            width = 832;
-            height = 1216;
+            width = 832; height = 1216;
         }
 
-        // ============== Flux Klein ==============
-        // Modify Prompt
-        // workflow["12"].inputs.text = userPrompt;
-
-        // Modify Seed
-        // workflow["3"].inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
-
-        // workflow["7"].inputs.value = width;
-        // workflow["8"].inputs.value = height;
-
-        // ============ Z Image Turbo =============
-        // Modify Prompt
+        // Prompt
         workflow["5"].inputs.text = userPrompt;
 
-        // Modify Seed
-        workflow["8"].inputs.seed = Math.floor(Math.random() * 9007199254740991);
+        // Sampler params — clamp to safe values
+        workflow["8"].inputs.seed = (seed && seed !== -1) ? seed : Math.floor(Math.random() * 9007199254740991);
+        workflow["8"].inputs.steps = steps ? Math.min(50, Math.max(1, steps)) : workflow["8"].inputs.steps;
+        workflow["8"].inputs.cfg = cfgScale !== undefined ? Math.min(20, Math.max(0, cfgScale)) : workflow["8"].inputs.cfg;
+        workflow["8"].inputs.sampler_name = sampler || workflow["8"].inputs.sampler_name;
 
+        // Dimensions
         workflow["6"].inputs.width = width;
         workflow["6"].inputs.height = height;
 

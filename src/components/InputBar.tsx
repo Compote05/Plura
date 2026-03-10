@@ -440,33 +440,31 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
 
                 <form
                     onSubmit={handleSubmit}
-                    className="bg-sidebar/80 backdrop-blur-xl rounded-2xl relative flex flex-col group focus-within:ring-1 focus-within:ring-white/10 focus-within:bg-sidebar mx-auto w-full max-w-3xl border border-white/[0.08] shadow-sm"
+                    className="bg-card border border-border rounded-xl flex flex-col p-2 gap-1 focus-within:border-foreground/15 transition-colors mx-auto w-full max-w-3xl"
                 >
-                    {/* Attachments Preview Area */}
+                    {/* Attachments */}
                     {attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-3 p-3 pb-0">
+                        <div className="flex flex-wrap gap-2 px-2 pt-1">
                             {attachments.map((attachment, idx) => (
-                                <div key={idx} className="relative group/attachment flex items-center bg-black/20 rounded-xl overflow-hidden border border-white-[0.05] pr-2 shadow-inner">
+                                <div key={idx} className="relative group/attachment flex items-center bg-black/20 rounded-lg overflow-hidden border border-white/5 pr-2">
                                     {attachment.preview ? (
-                                        <div className="h-12 w-12 shrink-0 bg-black/50">
+                                        <div className="h-10 w-10 shrink-0 bg-black/50">
                                             {/* eslint-disable-next-line @next/next/no-img-element */}
                                             <img src={attachment.preview} alt="preview" className="h-full w-full object-cover" />
                                         </div>
                                     ) : (
-                                        <div className="h-12 w-12 shrink-0 flex items-center justify-center bg-white/5">
-                                            <FileText className="text-white/40" size={20} />
+                                        <div className="h-10 w-10 shrink-0 flex items-center justify-center bg-white/5">
+                                            <FileText className="text-white/40" size={16} />
                                         </div>
                                     )}
-                                    <div className="flex flex-col ml-3 mr-6 max-w-[120px]">
+                                    <div className="flex flex-col ml-2 mr-5 max-w-[100px]">
                                         <span className="text-xs text-white/90 truncate">{attachment.file.name}</span>
-                                        {attachment.isUploading && (
-                                            <span className="text-[10px] text-primary">Uploading...</span>
-                                        )}
+                                        {attachment.isUploading && <span className="text-[10px] text-primary">Uploading...</span>}
                                     </div>
                                     <button
                                         type="button"
                                         onClick={() => removeAttachment(attachment)}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 bg-black/50 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 opacity-0 group-hover/attachment:opacity-100 transition-all"
+                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 bg-black/50 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 opacity-0 group-hover/attachment:opacity-100 transition-all text-xs"
                                     >
                                         &times;
                                     </button>
@@ -475,48 +473,53 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
                         </div>
                     )}
 
-                    <div className="flex items-end gap-1.5 w-full">
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            className="hidden"
-                            multiple
-                            accept={isVisionSupported ? ".pdf,.docx,.pptx,.txt,.md,.csv,image/*" : ".pdf,.docx,.pptx,.txt,.md,.csv"}
-                            onChange={handleFileSelect}
-                        />
-                        <button
-                            type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            className="ml-2 p-3 mr-1 text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors shrink-0 rounded-full my-auto"
-                        >
-                            <Paperclip size={20} />
-                        </button>
+                    {/* Textarea */}
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        multiple
+                        accept={isVisionSupported ? ".pdf,.docx,.pptx,.txt,.md,.csv,image/*" : ".pdf,.docx,.pptx,.txt,.md,.csv"}
+                        onChange={handleFileSelect}
+                    />
+                    <textarea
+                        ref={textareaRef}
+                        value={value}
+                        onChange={handleTextChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Ask anything..."
+                        className="w-full max-h-[200px] bg-transparent outline-none border-none shadow-none focus:outline-none focus:ring-0 text-foreground placeholder:text-foreground/30 resize-none pt-1.5 pb-0.5 px-2 leading-relaxed text-sm"
+                        rows={1}
+                    />
 
-                        <textarea
-                            ref={textareaRef}
-                            value={value}
-                            onChange={handleTextChange}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Ask anything..."
-                            className="w-full max-h-[200px] bg-transparent outline-none border-none shadow-none focus:outline-none focus:ring-0 focus:border-transparent text-white placeholder:text-white/40 resize-none py-3.5 px-1 leading-relaxed"
-                            rows={1}
-                        />
+                    {/* Controls row */}
+                    <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-foreground/35 hover:text-foreground/65 hover:bg-accent transition-colors"
+                                title="Attach file"
+                            >
+                                <Paperclip size={12} />
+                            </button>
 
-                        <div className="flex items-center gap-2 p-1 shrink-0 my-auto pr-2">
                             <button
                                 type="button"
                                 onClick={() => setIsThinkingEnabled(!isThinkingEnabled)}
                                 className={cn(
-                                    "p-2.5 rounded-full transition-colors flex items-center gap-1.5",
+                                    "flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors",
                                     isThinkingEnabled
-                                        ? "bg-white/10 text-white shadow-sm"
-                                        : "text-white/40 hover:text-white/80 hover:bg-white/5"
+                                        ? "text-foreground/70 bg-accent"
+                                        : "text-foreground/35 hover:text-foreground/65 hover:bg-accent"
                                 )}
-                                title="Toggle Reasoning (Think)"
+                                title="Toggle Reasoning"
                             >
-                                <Brain size={18} strokeWidth={isThinkingEnabled ? 2.5 : 2} />
+                                <Brain size={12} strokeWidth={isThinkingEnabled ? 2.2 : 1.8} />
+                                <span>Think</span>
                             </button>
-                            <div className="relative flex items-center text-white/40 hover:text-white/90 transition-colors">
+
+                            <div className="relative flex items-center text-foreground/35 hover:text-foreground/65 transition-colors rounded-lg px-2 py-1 cursor-pointer hover:bg-accent">
                                 <select
                                     value={model || ""}
                                     onChange={(e) => {
@@ -537,54 +540,38 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
                                         ))
                                     )}
                                 </select>
-
-                                <div className={cn(
-                                    "flex items-center gap-1.5 pointer-events-none py-1 relative z-0",
-                                    availableModels.length === 0 ? "opacity-50 text-red-400" : ""
-                                )}>
-                                    <Sparkles className="w-4 h-4 shrink-0" />
-                                    <AnimatePresence>
-                                        {!value && (
-                                            <motion.span
-                                                initial={{ opacity: 0, width: 0 }}
-                                                animate={{ opacity: 1, width: "auto" }}
-                                                exit={{ opacity: 0, width: 0 }}
-                                                transition={{ duration: 0.2 }}
-                                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
-                                            >
-                                                {isLoadingModels ? "Loading models..." : (availableModels.length === 0 ? "No models available" : (availableModels.find(m => m.id === model)?.name || "Select Model"))}
-                                            </motion.span>
-                                        )}
-                                    </AnimatePresence>
-                                    {availableModels.length > 0 && <ChevronDown className="w-3.5 h-3.5 shrink-0" />}
+                                <div className={cn("flex items-center gap-1.5 pointer-events-none text-xs", availableModels.length === 0 ? "opacity-50 text-red-400" : "")}>
+                                    <Sparkles size={12} />
+                                    <span className="max-w-[120px] truncate">
+                                        {isLoadingModels ? "Loading..." : (availableModels.length === 0 ? "No models" : (availableModels.find(m => m.id === model)?.name || "Select"))}
+                                    </span>
+                                    {availableModels.length > 0 && <ChevronDown size={10} className="opacity-50" />}
                                 </div>
                             </div>
-                            {isStreaming ? (
-                                <button
-                                    type="button"
-                                    onClick={(e) => {
-                                        e.preventDefault();
-                                        if (onStop) onStop();
-                                    }}
-                                    className="p-2.5 rounded-full flex items-center justify-center transition-all duration-200 bg-white text-black hover:bg-neutral-200 shadow-sm"
-                                >
-                                    <div className="w-3 h-3 rounded-[2px] bg-black" />
-                                </button>
-                            ) : (
-                                <button
-                                    type="submit"
-                                    disabled={!value.trim() || !model || attachments.some(a => a.isUploading)}
-                                    className={cn(
-                                        "p-2.5 rounded-full flex items-center justify-center transition-all duration-200",
-                                        (value.trim() || (attachments.filter(a => a.file.type.startsWith('image/')).length > 0)) && model && !attachments.some(a => a.isUploading)
-                                            ? "bg-white text-black hover:bg-neutral-200 shadow-sm"
-                                            : "bg-white/[0.05] text-white/20 cursor-not-allowed"
-                                    )}
-                                >
-                                    <ArrowUp size={18} strokeWidth={2.5} />
-                                </button>
-                            )}
                         </div>
+
+                        {isStreaming ? (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); if (onStop) onStop(); }}
+                                className="p-1.5 rounded-lg flex items-center justify-center bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                            >
+                                <div className="w-2.5 h-2.5 rounded-[2px] bg-background" />
+                            </button>
+                        ) : (
+                            <button
+                                type="submit"
+                                disabled={!value.trim() || !model || attachments.some(a => a.isUploading)}
+                                className={cn(
+                                    "p-1.5 rounded-lg flex items-center justify-center transition-colors",
+                                    (value.trim() || attachments.filter(a => a.file.type.startsWith('image/')).length > 0) && model && !attachments.some(a => a.isUploading)
+                                        ? "bg-foreground text-background hover:bg-foreground/90"
+                                        : "bg-foreground/6 text-foreground/20 cursor-not-allowed"
+                                )}
+                            >
+                                <ArrowUp size={14} strokeWidth={2.5} />
+                            </button>
+                        )}
                     </div>
                 </form>
             </div>
