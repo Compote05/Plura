@@ -50,7 +50,15 @@ export default function Sidebar() {
     const [editTitle, setEditTitle] = useState("");
 
     const fetcher = async ([_, userId, tab]: [string, string, string]) => {
-        if (tab === "library") return [];
+        if (tab === "library") {
+            const { data, error } = await supabase
+                .from('documents')
+                .select('id, filename, created_at')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            return (data || []).map(d => ({ id: d.id, title: d.filename, created_at: d.created_at })) as Thread[];
+        }
 
         let query = supabase
             .from('threads')
@@ -184,130 +192,31 @@ export default function Sidebar() {
             <div className="flex flex-col gap-1 px-3">
                 {!isCollapsed && <p className="px-3 text-[11px] font-bold text-white/30 mb-2 tracking-[0.15em] uppercase">Modes</p>}
 
-                <button
-                    onClick={() => {
-                        onTabChange("chat");
-                        onThreadSelect(null);
-                    }}
-                    title="Chat"
-                    className={cn(
-                        "flex items-center transition-all duration-200 group relative",
-                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
-                        activeTab === "chat" && activeThreadId === null
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                >
-                    {(activeTab === "chat" && activeThreadId === null && !isCollapsed) && (
-                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
-                    )}
-                    <MessageSquare size={isCollapsed ? 20 : 16} className={(activeTab === "chat" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
-                    <AnimatePresence>
-                        {!isCollapsed && (
-                            <motion.span
-                                initial={{ opacity: 0, width: 0 }}
-                                animate={{ opacity: 1, width: "auto" }}
-                                exit={{ opacity: 0, width: 0 }}
-                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
-                            >
-                                Chat
-                            </motion.span>
+                {[
+                    { tab: "chat" as const, label: "Chat", icon: MessageSquare, check: activeTab === "chat" && activeThreadId === null },
+                    { tab: "image" as const, label: "Image Generation", icon: ImageIcon, check: activeTab === "image" && activeThreadId === null },
+                    { tab: "tts" as const, label: "Audio Studio", icon: AudioLines, check: activeTab === "tts" && activeThreadId === null },
+                    { tab: "library" as const, label: "Library", icon: Library, check: activeTab === "library" },
+                ].map(({ tab, label, icon: Icon, check }) => (
+                    <button
+                        key={tab}
+                        onClick={() => { onTabChange(tab); if (tab !== "library") onThreadSelect(null); }}
+                        title={label}
+                        className={cn(
+                            "flex items-center gap-3 transition-colors duration-150 relative",
+                            isCollapsed ? "justify-center p-2.5 rounded-lg" : "px-3 py-2 rounded-lg w-full",
+                            check
+                                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                                : "text-sidebar-foreground/50 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                         )}
-                    </AnimatePresence>
-                </button>
-
-                <button
-                    onClick={() => {
-                        onTabChange("image");
-                        onThreadSelect(null);
-                    }}
-                    title="Image Generation"
-                    className={cn(
-                        "flex items-center transition-all duration-200 group relative",
-                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
-                        activeTab === "image" && activeThreadId === null
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                >
-                    {(activeTab === "image" && activeThreadId === null && !isCollapsed) && (
-                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
-                    )}
-                    <ImageIcon size={isCollapsed ? 20 : 16} className={(activeTab === "image" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
-                    <AnimatePresence>
-                        {!isCollapsed && (
-                            <motion.span
-                                initial={{ opacity: 0, width: 0 }}
-                                animate={{ opacity: 1, width: "auto" }}
-                                exit={{ opacity: 0, width: 0 }}
-                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
-                            >
-                                Image Generation
-                            </motion.span>
+                    >
+                        {check && !isCollapsed && (
+                            <div className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[55%] bg-primary rounded-full" />
                         )}
-                    </AnimatePresence>
-                </button>
-
-                <button
-                    onClick={() => {
-                        onTabChange("tts");
-                        onThreadSelect(null);
-                    }}
-                    title="Audio Studio"
-                    className={cn(
-                        "flex items-center transition-all duration-200 group relative",
-                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
-                        activeTab === "tts" && activeThreadId === null
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                >
-                    {(activeTab === "tts" && activeThreadId === null && !isCollapsed) && (
-                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
-                    )}
-                    <AudioLines size={isCollapsed ? 20 : 16} className={(activeTab === "tts" && activeThreadId === null) ? "opacity-100" : "opacity-70"} />
-                    <AnimatePresence>
-                        {!isCollapsed && (
-                            <motion.span
-                                initial={{ opacity: 0, width: 0 }}
-                                animate={{ opacity: 1, width: "auto" }}
-                                exit={{ opacity: 0, width: 0 }}
-                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
-                            >
-                                Audio Studio
-                            </motion.span>
-                        )}
-                    </AnimatePresence>
-                </button>
-
-                <button
-                    onClick={() => onTabChange("library")}
-                    title="Library"
-                    className={cn(
-                        "flex items-center transition-all duration-200 group relative",
-                        isCollapsed ? "justify-center p-2.5 rounded-lg" : "gap-3 px-3 py-2 rounded-xl w-full",
-                        activeTab === "library"
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                >
-                    {(activeTab === "library" && !isCollapsed) && (
-                        <motion.div layoutId="activeTabIndicator" className="absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-full" />
-                    )}
-                    <Library size={isCollapsed ? 20 : 16} className={activeTab === "library" ? "opacity-100" : "opacity-70"} />
-                    <AnimatePresence>
-                        {!isCollapsed && (
-                            <motion.span
-                                initial={{ opacity: 0, width: 0 }}
-                                animate={{ opacity: 1, width: "auto" }}
-                                exit={{ opacity: 0, width: 0 }}
-                                className="text-sm font-medium whitespace-nowrap overflow-hidden"
-                            >
-                                Library
-                            </motion.span>
-                        )}
-                    </AnimatePresence>
-                </button>
+                        <Icon size={isCollapsed ? 20 : 15} />
+                        {!isCollapsed && <span className="text-sm font-medium">{label}</span>}
+                    </button>
+                ))}
             </div>
 
             {/* History Area */}
@@ -346,31 +255,15 @@ export default function Sidebar() {
                                     />
                                 ) : (
                                     <div
-                                        className="relative truncate w-full pr-2"
-                                        onClick={() => {
-                                            // The tab logic doesn't need to change if we only show relevant threads
-                                            onThreadSelect(thread.id);
-                                        }}
+                                        className="truncate w-full pr-2"
+                                        onClick={() => onThreadSelect(thread.id)}
                                     >
-                                        <AnimatePresence mode="wait">
-                                            <motion.span
-                                                key={thread.title}
-                                                initial={{ opacity: 0, y: 5 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                exit={{ opacity: 0, y: -5 }}
-                                                transition={{ duration: 0.2 }}
-                                                className="absolute inset-0 truncate flex items-center"
-                                            >
-                                                {thread.title}
-                                            </motion.span>
-                                        </AnimatePresence>
-                                        {/* Invisible duplicate to maintain layout height while animating absolutely positioned text */}
-                                        <span className="invisible block pointer-events-none truncate">{thread.title}</span>
+                                        <span className="truncate">{thread.title}</span>
                                     </div>
                                 )}
 
                                 {/* Hover Actions Menu */}
-                                {editingThreadId !== thread.id && (
+                                {editingThreadId !== thread.id && activeTab !== "library" && (
                                     <div className="flex-shrink-0 relative">
                                         <button
                                             onClick={(e) => {
@@ -399,7 +292,7 @@ export default function Sidebar() {
                                                         initial={{ opacity: 0, scale: 0.95, y: -5 }}
                                                         animate={{ opacity: 1, scale: 1, y: 0 }}
                                                         exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                                                        className="absolute right-0 top-full mt-1 w-36 bg-[#0a0c12] border border-[#1a1d29] rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.8)] z-50 overflow-hidden py-1"
+                                                        className="absolute right-0 top-full mt-1 w-36 bg-[#1e1d1c] border border-[#2a2927] rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.6)] z-50 overflow-hidden py-1"
                                                     >
                                                         <button
                                                             onClick={(e) => {
@@ -498,22 +391,13 @@ export default function Sidebar() {
                         )}>
                             <UserIcon size={16} className="text-primary-foreground" />
                         </div>
-                        <AnimatePresence>
-                            {!isCollapsed && (
-                                <motion.div
-                                    initial={{ opacity: 0, width: 0 }}
-                                    animate={{ opacity: 1, width: "auto" }}
-                                    exit={{ opacity: 0, width: 0 }}
-                                    className="ml-3 text-left whitespace-nowrap overflow-hidden"
-                                >
-                                    <p className="text-sm font-medium text-white">
-                                        {user
-                                            ? (user.user_metadata?.full_name || user.email?.split('@')[0] || "User")
-                                            : "Sign in"}
-                                    </p>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+                        {!isCollapsed && (
+                            <p className="ml-3 text-sm font-medium text-white whitespace-nowrap overflow-hidden">
+                                {user
+                                    ? (user.user_metadata?.full_name || user.email?.split('@')[0] || "User")
+                                    : "Sign in"}
+                            </p>
+                        )}
                     </button>
 
                     <button

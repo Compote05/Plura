@@ -222,7 +222,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}) },
                 body: JSON.stringify({ target: "comfyui" })
-            }).catch(() => {});
+            }).catch(() => { });
         }
         setLastUsedMode("chat");
 
@@ -720,7 +720,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     className="absolute w-full z-20 px-4 flex justify-center pointer-events-none"
                 >
                     <div className={cn(
-                        "w-full max-w-3xl pb-8 relative pointer-events-auto bg-[#0a0a0a]",
+                        "w-full max-w-3xl pb-8 relative pointer-events-auto bg-[#171615]",
                         !isInitial && "before:absolute before:inset-0 before:bg-transparent before:-z-10 before:pointer-events-none"
                     )}>
                         <div>
