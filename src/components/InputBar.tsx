@@ -50,7 +50,7 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
     const [attachedDocs, setAttachedDocs] = useState<DatabaseDocument[]>([]);
 
     useEffect(() => {
-        if (!user || user.is_anonymous) return;
+        if (!user) return;
 
         const fetchDocs = async () => {
             const { data } = await supabase
@@ -289,7 +289,7 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
 
         const docsToUpload = newAttachments.filter(a => !a.file.type.startsWith('image/'));
 
-        if (docsToUpload.length > 0 && user && !user.is_anonymous) {
+        if (docsToUpload.length > 0 && user) {
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) return;

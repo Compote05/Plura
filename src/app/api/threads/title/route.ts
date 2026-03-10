@@ -45,33 +45,32 @@ export async function POST(req: Request) {
             console.warn("Failed to fetch global LLM settings for title generation, falling back to default.", e);
         }
 
-        // Prepare the prompt for the model
-        const titlePrompt = `Create a short summary to name this conversation. The idea is that we will use it as the title for the conversation list, so it needs to be short and fairly explicit. It doesn't have to repeat the user's question word for word, but it does need to be explicit. Do not use generic titles like "New Chat" or "Conversation".
+        const userContent = messages[0].content.slice(0, 500);
+        const assistantContent = messages[1].content.slice(0, 500);
 
-Conversation:
-User: ${messages[0].content}
-Assistant: ${messages[1].content}`;
-
-        // Call Ollama API
         const response = await fetch(`${ollamaUrl}/api/chat`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 model: model,
-                messages: [{ role: "user", content: titlePrompt }],
                 stream: false,
+                think: false,
+                messages: [
+                    {
+                        role: "system",
+                        content: "You are a conversation title generator. Given a conversation between a user and an assistant, generate a short, explicit title (max 6 words). Respond ONLY with the JSON format requested. Also the title need to be in the same langage as the user."
+                    },
+                    {
+                        role: "user",
+                        content: `Conversation:\nUser: ${userContent}\nAssistant: ${assistantContent}\n\nGenerate a concise title for this conversation.`
+                    }
+                ],
                 format: {
                     type: "object",
                     properties: {
                         title: { type: "string" }
                     },
                     required: ["title"]
-                },
-                options: {
-                    temperature: 1, // Lower temperature for more deterministic/consistent titles
-                    num_predict: 50 // Keep the output short
                 }
             })
         });
@@ -82,26 +81,16 @@ Assistant: ${messages[1].content}`;
 
         const data = await response.json();
 
-        // Parse the generated JSON content
-        let generatedTitle = "New Chat";
+        let generatedTitle: string;
         try {
-            // Ollama with a JSON schema format returns the JSON string directly in content
-            const parsedContent = JSON.parse(data.message.content);
-            if (parsedContent && typeof parsedContent.title === 'string' && parsedContent.title.trim() !== "") {
-                generatedTitle = parsedContent.title.trim();
-            }
-        } catch (_) {
-            console.error("Failed to parse JSON title from Ollama:", data.message.content);
-            // Fallback: try to just grab the raw string and strip weird chars if it failed JSON validation
-            generatedTitle = data.message.content.replace(/["'{}]/g, '').replace('title:', '').trim();
-            if (generatedTitle.length > 50) generatedTitle = generatedTitle.substring(0, 50) + "...";
-            if (!generatedTitle) generatedTitle = "New Chat";
+            const parsed = JSON.parse(data.message.content);
+            generatedTitle = parsed.title?.trim() || "";
+        } catch {
+            generatedTitle = "";
         }
 
-        // Extremely generic safeguard
-        if (generatedTitle.toLowerCase() === "new chat" || generatedTitle.toLowerCase() === "conversation") {
-            // Fallback to the first few words of the user prompt if the AI failed completely
-            generatedTitle = messages[0].content.split(" ").slice(0, 5).join(" ").replace(/[^a-zA-Z0-9 ]/g, "").trim() + "...";
+        if (!generatedTitle) {
+            generatedTitle = messages[0].content.split(" ").slice(0, 5).join(" ").trim();
         }
 
         // Update the Supabase thread with the new title

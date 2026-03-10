@@ -17,7 +17,7 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        const { imageUrl, prompt } = body;
+        const { imageUrl, prompt, metadata } = body;
         const userId = user.id; // Prevent ID Spoofing by using authenticated ID
 
         if (!imageUrl || !prompt) {
@@ -77,33 +77,25 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Storage upload failed: " + uploadError.message }, { status: 500 });
         }
 
-        // Generate the secure proxy URL (anonymized/privacy-respecting)
         const permanentUrl = `/api/library/images/${fileName}`;
 
-        // 5. Save to database
-        const { data: docData, error: dbError } = await supabaseAdmin
-            .from('documents')
+        // 5. Save to images table
+        const { error: dbError } = await supabaseAdmin
+            .from('images')
             .insert([{
                 user_id: userId,
-                filename: fileName,
+                prompt: prompt,
                 storage_path: filePath,
-                size: buffer.length,
-                content_type: 'image/png',
-                extracted_text: 'generated_image' // Tag it clearly
-            }])
-            .select()
-            .single();
+                seed: metadata?.seed ?? null,
+                parameters: metadata ?? null
+            }]);
 
         if (dbError) {
             console.error("Database insert error:", dbError);
-            throw new Error(`Failed to insert document reference: ${dbError.message}`);
+            throw new Error(`Failed to insert image reference: ${dbError.message}`);
         }
 
-        return NextResponse.json({
-            success: true,
-            permanentUrl: permanentUrl,
-            documentId: docData.id
-        });
+        return NextResponse.json({ success: true, permanentUrl });
 
     } catch (error: unknown) {
         console.error("Image save route error:", error);

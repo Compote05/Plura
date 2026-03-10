@@ -16,6 +16,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ImageViewer from "./ImageViewer";
 
 import { cn } from "@/lib/utils";
+import { useAppContext } from "@/context/AppContext";
 
 function CopyButton({ text }: { text: string }) {
     const [copied, setCopied] = useState(false);
@@ -123,8 +124,8 @@ interface ChatAreaProps {
 }
 
 export default function ChatArea({ user, activeThreadId, onThreadCreated, onThreadGeneratedTitle }: ChatAreaProps) {
+    const { lastUsedMode, setLastUsedMode } = useAppContext();
     const [messages, setMessages] = useState<Message[]>([]);
-    const [showLoginPrompt, setShowLoginPrompt] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
     const isInitial = messages.length === 0;
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -144,7 +145,6 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
     useEffect(() => {
         if (!activeThreadId) {
             setMessages([]);
-            setShowLoginPrompt(false);
             return;
         }
 
@@ -214,12 +214,17 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
 
     const handleSubmit = async (text: string, model: string, attachedDocs: DatabaseDocument[], attachedImages: string[], think: boolean) => {
         isAutoScrollEnabledRef.current = true;
-        // 4 Message Limit for Anonymous users
-        const userMessagesCount = messages.filter(m => m.role === 'user').length;
-        if ((!user || user.is_anonymous) && userMessagesCount >= 4) {
-            setShowLoginPrompt(true);
-            return;
+
+        // Clear ComfyUI VRAM if switching from image/tts to chat
+        if (lastUsedMode && lastUsedMode !== "chat") {
+            const { data: { session } } = await supabase.auth.getSession();
+            fetch("/api/vram/clear", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}) },
+                body: JSON.stringify({ target: "comfyui" })
+            }).catch(() => {});
         }
+        setLastUsedMode("chat");
 
         // Add Document text context to the user's prompt if there are attached documents
         let fullContent = text;
@@ -255,8 +260,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
 
         let currentThreadId = activeThreadId;
 
-        // Try to save to DB if user successfully authenticated and is NOT anonymous
-        if (user && !user.is_anonymous) {
+        if (user) {
             if (!currentThreadId) {
                 // Immediately save the user's first prompt as the temporary title
                 const title = text.slice(0, 40) + (text.length > 40 ? "..." : "");
@@ -275,6 +279,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     .insert([{
                         user_id: user.id,
                         title: title,
+                        session_type: 'chat',
                         model: model,
                         messages: newMessagesContext
                     }])
@@ -389,7 +394,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
             }
 
             // Stream complete, save final message to DB
-            if (currentThreadId && user && !user.is_anonymous) {
+            if (currentThreadId && user) {
                 const finalAssistantMsg: Message = { id: assistantId, role: "assistant", content: responseText, thinking: thinkingText };
                 const finalMessages = [...newMessagesContext, finalAssistantMsg];
                 await supabase
@@ -437,7 +442,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                 }
 
                 // The current partial message is already in state, just save it to DB
-                if (currentThreadId && user && !user.is_anonymous) {
+                if (currentThreadId && user) {
                     setMessages(currentMessages => {
                         const finalMessages = currentMessages;
                         supabase
@@ -718,20 +723,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                         "w-full max-w-3xl pb-8 relative pointer-events-auto bg-[#0a0a0a]",
                         !isInitial && "before:absolute before:inset-0 before:bg-transparent before:-z-10 before:pointer-events-none"
                     )}>
-                        {showLoginPrompt && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="mb-4 p-4 rounded-xl bg-primary/10 border border-primary/20 text-center"
-                            >
-                                <p className="text-white text-sm font-medium mb-1">Sign up to continue</p>
-                                <p className="text-white/60 text-xs mb-3">You&apos;ve reached the 4 message limit for anonymous sessions.</p>
-                                <button className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors">
-                                    Create Account
-                                </button>
-                            </motion.div>
-                        )}
-                        <div className={showLoginPrompt ? "pointer-events-none opacity-50" : ""}>
+                        <div>
                             <InputBar
                                 user={user}
                                 onSubmit={handleSubmit}

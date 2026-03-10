@@ -5,6 +5,7 @@ import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
 import { supabase } from "@/lib/supabase";
 import { X } from "lucide-react";
+import { useEffect } from "react";
 
 interface AuthModalProps {
     isOpen: boolean;
@@ -12,6 +13,16 @@ interface AuthModalProps {
 }
 
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
+    useEffect(() => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN') {
+                onClose();
+            }
+        });
+
+        return () => subscription.unsubscribe();
+    }, [onClose]);
+
     return (
         <AnimatePresence>
             {isOpen && (

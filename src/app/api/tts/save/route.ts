@@ -91,33 +91,24 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Storage upload failed: " + uploadError.message }, { status: 500 });
         }
 
-        // Generate the secure proxy URL (anonymized/privacy-respecting)
         const permanentUrl = `/api/library/audio/${fileName}`;
 
-        // 5. Save to database
-        const { data: docData, error: dbError } = await supabaseAdmin
-            .from('documents')
+        // 5. Save to audio table
+        const { error: dbError } = await supabaseAdmin
+            .from('audio')
             .insert([{
                 user_id: userId,
-                filename: fileName,
+                prompt: prompt,
                 storage_path: filePath,
-                size: buffer.length,
-                content_type: mimeType,
-                extracted_text: 'generated_audio' // Tag it clearly for TTS
-            }])
-            .select()
-            .single();
+                parameters: { content_type: mimeType }
+            }]);
 
         if (dbError) {
             console.error("Database insert error:", dbError);
-            throw new Error(`Failed to insert document reference: ${dbError.message}`);
+            throw new Error(`Failed to insert audio reference: ${dbError.message}`);
         }
 
-        return NextResponse.json({
-            success: true,
-            permanentUrl: permanentUrl,
-            documentId: docData.id
-        });
+        return NextResponse.json({ success: true, permanentUrl });
 
     } catch (error: unknown) {
         console.error("TTS save route error:", error);

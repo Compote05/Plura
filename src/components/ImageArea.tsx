@@ -37,7 +37,7 @@ export default function ImageArea({ user }: { user: User | null }) {
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
 
-    const { activeThreadId: currentThreadId, setActiveThreadId: setCurrentThreadId } = useAppContext();
+    const { activeThreadId: currentThreadId, setActiveThreadId: setCurrentThreadId, lastUsedMode, setLastUsedMode } = useAppContext();
     const skipNextFetchRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -152,6 +152,7 @@ export default function ImageArea({ user }: { user: User | null }) {
             .insert([{
                 user_id: user.id,
                 title: title,
+                session_type: 'image_generation',
                 model: 'image-generation',
                 messages: initialMessages
             }])
@@ -184,6 +185,17 @@ export default function ImageArea({ user }: { user: User | null }) {
 
         if (!msgIdToRegenerate) setPrompt("");
         setIsGenerating(true);
+
+        // Clear Ollama VRAM if switching from chat to image generation
+        if (lastUsedMode === "chat") {
+            const { data: { session } } = await supabase.auth.getSession();
+            fetch("/api/vram/clear", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}) },
+                body: JSON.stringify({ target: "ollama" })
+            }).catch(() => {});
+        }
+        setLastUsedMode("image_generation");
 
         const reqAspectRatio = metadataToRegenerate?.aspectRatio || aspectRatio;
         const reqSteps = metadataToRegenerate?.steps || advancedSettings.steps;
@@ -389,6 +401,15 @@ export default function ImageArea({ user }: { user: User | null }) {
                     }
                 } catch (e) {
                     console.error("Failed to permanently save image to storage", e);
+                    // Don't persist raw ComfyUI URL in DB — clear imageUrl so it won't break on IP change
+                    messagesAfterGen = messagesAfterGen.map((msg): Message => {
+                        if (msg.id !== asstMsgId) return msg;
+                        const newVariations = msg.variations?.map((v, i) =>
+                            i === (msg.currentVariationIndex ?? 0) ? { ...v, status: "error" as const, imageUrl: undefined } : v
+                        );
+                        return { ...msg, status: "error" as const, imageUrl: undefined, ...(newVariations && { variations: newVariations }) };
+                    });
+                    setMessages(messagesAfterGen);
                 }
 
                 if (activeThreadId) {

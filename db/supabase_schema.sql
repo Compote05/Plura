@@ -11,6 +11,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TYPE chat_role AS ENUM ('user', 'assistant', 'system');
 CREATE TYPE ai_provider AS ENUM ('ollama', 'openai', 'comfyui', 'vllm', 'custom');
 CREATE TYPE user_role AS ENUM ('user', 'admin');
+CREATE TYPE session_type AS ENUM ('chat', 'image_generation', 'text_to_speech');
 
 -- 3. Profiles Table (Extended User Data)
 -- Links to auth.users and stores explicit roles
@@ -52,8 +53,9 @@ CREATE TABLE public.threads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     title VARCHAR(255) DEFAULT 'New Conversation',
+    session_type session_type NOT NULL DEFAULT 'chat',
     model VARCHAR(255),
-    messages JSONB DEFAULT '[]'::jsonb, -- Stores the chat message history as an array of JSON objects
+    messages JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL
 );
@@ -103,6 +105,7 @@ RETURNS TABLE (
   similarity float
 )
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 BEGIN
   RETURN QUERY
@@ -112,27 +115,41 @@ BEGIN
     dc.content,
     1 - (dc.embedding <=> query_embedding) AS similarity
   FROM public.document_chunks dc
-  WHERE array_length(filter_document_ids, 1) IS NULL OR dc.document_id = ANY(filter_document_ids)
+  INNER JOIN public.documents d ON d.id = dc.document_id
+  WHERE
+    d.user_id = auth.uid()
+    AND (array_length(filter_document_ids, 1) IS NULL OR dc.document_id = ANY(filter_document_ids))
   ORDER BY dc.embedding <=> query_embedding
   LIMIT match_count;
 END;
 $$;
 
 -- 5. Images Table
--- Stores references to images generated, linked to a user.
--- The actual image files should be stored in the Supabase 'images' bucket.
+-- Stores references to AI-generated images, linked to a user.
 CREATE TABLE public.images (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     prompt TEXT NOT NULL,
-    storage_path TEXT NOT NULL, -- The path within the Supabase Storage Bucket
+    storage_path TEXT NOT NULL,
     seed BIGINT,
-    parameters JSONB, -- Store comfyui generation metadata (cfg, steps, etc.)
+    parameters JSONB, -- ComfyUI generation metadata (model, steps, cfg, aspect_ratio, etc.)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL
 );
 
--- Index for fetching a user's image history
 CREATE INDEX idx_images_user_id ON public.images(user_id);
+
+-- 6. Audio Table
+-- Stores references to AI-generated audio (TTS, music, etc.), linked to a user.
+CREATE TABLE public.audio (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    parameters JSONB, -- Generation metadata (model, seed, duration, etc.)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL
+);
+
+CREATE INDEX idx_audio_user_id ON public.audio(user_id);
 
 -- 6. Setup the Unified Storage Bucket
 -- Creates a single PRIVATE bucket named 'library' for all user assets (audio, images, uploads)
@@ -145,6 +162,7 @@ ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE public.threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audio ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
 -- Threads RLS
@@ -169,6 +187,26 @@ ON public.documents FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own documents" 
 ON public.documents FOR DELETE USING (auth.uid() = user_id);
+
+-- Images RLS
+CREATE POLICY "Users can view their own images"
+ON public.images FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own images"
+ON public.images FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own images"
+ON public.images FOR DELETE USING (auth.uid() = user_id);
+
+-- Audio RLS
+CREATE POLICY "Users can view their own audio"
+ON public.audio FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own audio"
+ON public.audio FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own audio"
+ON public.audio FOR DELETE USING (auth.uid() = user_id);
 
 -- Document Chunks RLS
 ALTER TABLE public.document_chunks ENABLE ROW LEVEL SECURITY;

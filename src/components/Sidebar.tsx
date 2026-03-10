@@ -59,11 +59,11 @@ export default function Sidebar() {
             .order('created_at', { ascending: false });
 
         if (tab === "image") {
-            query = query.eq('model', 'image-generation');
+            query = query.eq('session_type', 'image_generation');
         } else if (tab === "tts") {
-            query = query.eq('model', 'text-to-speech');
+            query = query.eq('session_type', 'text_to_speech');
         } else if (tab === "chat") {
-            query = query.neq('model', 'image-generation').neq('model', 'text-to-speech');
+            query = query.eq('session_type', 'chat');
         }
 
         const { data, error } = await query;
@@ -78,6 +78,16 @@ export default function Sidebar() {
     );
 
     const threads = threadsData || [];
+
+    // Add new thread to list when activeThreadId changes to a real UUID not yet in the list
+    useEffect(() => {
+        if (!activeThreadId) return;
+        const isRealUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeThreadId);
+        const isInList = threads.some(t => t.id === activeThreadId);
+        if (isRealUUID && !isInList) {
+            mutate();
+        }
+    }, [activeThreadId, threads, mutate]);
 
     // Listen for auto-generated title updates from the ChatArea
     useEffect(() => {
@@ -115,6 +125,7 @@ export default function Sidebar() {
         const { data: newThread } = await supabase.from('threads').insert([{
             user_id: user.id,
             title: `${fullThread.title} (Copy)`,
+            session_type: fullThread.session_type,
             model: fullThread.model,
             messages: fullThread.messages
         }]).select().single();
@@ -126,9 +137,9 @@ export default function Sidebar() {
             );
 
             // Stay within the correct tab context
-            if (fullThread.model === 'image-generation') {
+            if (fullThread.session_type === 'image_generation') {
                 onTabChange("image");
-            } else if (fullThread.model === 'text-to-speech') {
+            } else if (fullThread.session_type === 'text_to_speech') {
                 onTabChange("tts");
             } else {
                 onTabChange("chat");
@@ -443,7 +454,7 @@ export default function Sidebar() {
                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
                             className="absolute bottom-full left-3 right-3 mb-2 bg-popover border border-border rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.5)] z-50 overflow-hidden"
                         >
-                            {user && !user.is_anonymous ? (
+                            {user ? (
                                 <button
                                     onClick={openSettingsModal}
                                     className="flex items-center gap-3 w-full p-3 text-sm font-medium text-popover-foreground/70 hover:text-popover-foreground hover:bg-accent transition-colors"
@@ -483,7 +494,7 @@ export default function Sidebar() {
                     >
                         <div className={cn(
                             "w-8 h-8 rounded-full flex items-center justify-center shrink-0 border border-white/5",
-                            user && !user.is_anonymous ? "bg-primary" : "bg-sidebar-accent"
+                            user ? "bg-primary" : "bg-sidebar-accent"
                         )}>
                             <UserIcon size={16} className="text-primary-foreground" />
                         </div>
@@ -496,7 +507,7 @@ export default function Sidebar() {
                                     className="ml-3 text-left whitespace-nowrap overflow-hidden"
                                 >
                                     <p className="text-sm font-medium text-white">
-                                        {user && !user.is_anonymous
+                                        {user
                                             ? (user.user_metadata?.full_name || user.email?.split('@')[0] || "User")
                                             : "Sign in"}
                                     </p>

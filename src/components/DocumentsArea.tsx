@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -10,6 +10,14 @@ import ImageViewer from "./ImageViewer";
 import AudioViewer from "./AudioViewer";
 import Link from "next/link";
 
+interface GeneratedItem {
+    id: string;
+    type: "image" | "audio";
+    prompt: string;
+    storage_path: string;
+    created_at: string;
+}
+
 interface DatabaseDocument {
     id: string;
     filename: string;
@@ -17,7 +25,6 @@ interface DatabaseDocument {
     size: number;
     created_at: string;
     content_type?: string;
-    extracted_text?: string;
 }
 
 interface DocumentsAreaProps {
@@ -28,6 +35,7 @@ type MainSection = "explore" | "mydata";
 type DataTab = "generated" | "documents";
 
 export default function DocumentsArea({ user }: DocumentsAreaProps) {
+    const [generatedItems, setGeneratedItems] = useState<GeneratedItem[]>([]);
     const [documents, setDocuments] = useState<DatabaseDocument[]>([]);
     const [activeSection, setActiveSection] = useState<MainSection>("explore");
     const [activeDataTab, setActiveDataTab] = useState<DataTab>("generated");
@@ -44,123 +52,103 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
     useEffect(() => {
         if (!user) return;
 
-        const fetchDocs = async () => {
-            const { data, error } = await supabase
+        const fetchGenerated = async () => {
+            const [{ data: images }, { data: audio }] = await Promise.all([
+                supabase.from("images").select("id, prompt, storage_path, created_at").eq("user_id", user.id).order("created_at", { ascending: false }),
+                supabase.from("audio").select("id, prompt, storage_path, created_at").eq("user_id", user.id).order("created_at", { ascending: false }),
+            ]);
+
+            const items: GeneratedItem[] = [
+                ...(images || []).map(i => ({ ...i, type: "image" as const })),
+                ...(audio || []).map(a => ({ ...a, type: "audio" as const })),
+            ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+            setGeneratedItems(items);
+        };
+
+        const fetchDocuments = async () => {
+            const { data } = await supabase
                 .from("documents")
-                .select("*")
+                .select("id, filename, storage_path, size, content_type, created_at")
                 .eq("user_id", user.id)
                 .order("created_at", { ascending: false });
 
-            if (data && !error) {
-                setDocuments(data);
-            }
+            if (data) setDocuments(data);
         };
 
-        fetchDocs();
+        fetchGenerated();
+        fetchDocuments();
     }, [user]);
 
-
-
-    const handleDelete = async (doc: DatabaseDocument) => {
+    const handleDeleteGenerated = async (item: GeneratedItem) => {
         if (!user) return;
 
-        await supabase.storage
-            .from('library')
-            .remove([doc.storage_path]);
+        await supabase.storage.from("library").remove([item.storage_path]);
+        await supabase.from(item.type === "image" ? "images" : "audio").delete().eq("id", item.id);
+        setGeneratedItems(prev => prev.filter(i => i.id !== item.id));
+    };
 
-        await supabase
-            .from('documents')
-            .delete()
-            .eq('id', doc.id);
+    const handleDeleteDocument = async (doc: DatabaseDocument) => {
+        if (!user) return;
 
+        await supabase.storage.from("library").remove([doc.storage_path]);
+        await supabase.from("documents").delete().eq("id", doc.id);
         setDocuments(prev => prev.filter(d => d.id !== doc.id));
     };
 
     const formatBytes = (bytes: number) => {
-        if (bytes === 0) return '0 Bytes';
+        if (bytes === 0) return "0 Bytes";
         const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const sizes = ["Bytes", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
     };
 
-    // Memoize filtered documents to prevent infinite loops in useEffect
-    const filteredDocs = useMemo(() => {
-        return documents.filter((doc) => {
-            const isGeneratedImage = doc.extracted_text === 'generated_image';
-            const isGeneratedAudio = doc.extracted_text === 'generated_audio';
-            const isImageOrAudio = doc.content_type?.startsWith('image/') || doc.content_type?.startsWith('audio/');
-
-            if (activeDataTab === "generated") return isGeneratedImage || isGeneratedAudio;
-            if (activeDataTab === "documents") return !isImageOrAudio && !isGeneratedImage && !isGeneratedAudio;
-            return false;
-        });
-    }, [documents, activeDataTab]);
-
-    const getPublicUrl = (doc: DatabaseDocument) => {
-        // Return the cached signed URL if available
-        if (signedUrls[doc.storage_path]) return signedUrls[doc.storage_path];
-
-        // Return a transparent placeholder instead of a JSON-returning proxy URL
-        // to prevent 401/404 errors in media tags
+    const getSignedUrl = (storage_path: string) => {
+        if (signedUrls[storage_path]) return signedUrls[storage_path];
         return "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
     };
 
     const signedUrlsRef = useRef(signedUrls);
     signedUrlsRef.current = signedUrls;
 
-    const resolveSignedUrl = useCallback(async (doc: DatabaseDocument) => {
-        // Prevent duplicate calls using refs to avoid stale closures
-        if (signedUrlsRef.current[doc.storage_path] || resolvingUrls.current.has(doc.storage_path)) return;
-
-        resolvingUrls.current.add(doc.storage_path);
+    const resolveSignedUrl = useCallback(async (storage_path: string) => {
+        if (signedUrlsRef.current[storage_path] || resolvingUrls.current.has(storage_path)) return;
+        resolvingUrls.current.add(storage_path);
 
         try {
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                resolvingUrls.current.delete(doc.storage_path);
-                return;
-            }
+            if (!session) { resolvingUrls.current.delete(storage_path); return; }
 
-            // Strip userId for the proxy call
-            const relativePath = doc.storage_path.split('/').slice(1).join('/');
+            const relativePath = storage_path.split("/").slice(1).join("/");
             const res = await fetch(`/api/library/${relativePath}`, {
-                headers: {
-                    'Authorization': `Bearer ${session.access_token}`
-                }
+                headers: { "Authorization": `Bearer ${session.access_token}` }
             });
 
             if (res.ok) {
                 const { signedUrl } = await res.json();
-                setSignedUrls(prev => ({ ...prev, [doc.storage_path]: signedUrl }));
+                setSignedUrls(prev => ({ ...prev, [storage_path]: signedUrl }));
             }
         } catch (err) {
             console.error("Failed to resolve signed URL:", err);
         } finally {
-            resolvingUrls.current.delete(doc.storage_path);
+            resolvingUrls.current.delete(storage_path);
         }
     }, []);
 
-    // Auto-resolve URLs when filtered items change
     useEffect(() => {
-        filteredDocs.forEach(doc => {
-            const isMedia = doc.content_type?.startsWith('image/') ||
-                doc.content_type?.startsWith('audio/') ||
-                doc.extracted_text?.startsWith('generated_');
+        if (activeDataTab === "generated") {
+            generatedItems.forEach(item => resolveSignedUrl(item.storage_path));
+        }
+    }, [generatedItems, activeDataTab, resolveSignedUrl]);
 
-            if (isMedia) {
-                resolveSignedUrl(doc);
-            }
-        });
-    }, [filteredDocs, resolveSignedUrl]);
-
-    const handleItemClick = (doc: DatabaseDocument) => {
-        const url = getPublicUrl(doc);
-        if (doc.extracted_text === 'generated_image') {
-            setViewerImage({ src: url, prompt: doc.filename });
+    const handleItemClick = (item: GeneratedItem) => {
+        const url = getSignedUrl(item.storage_path);
+        if (item.type === "image") {
+            setViewerImage({ src: url, prompt: item.prompt });
             setImageViewerOpen(true);
-        } else if (doc.extracted_text === 'generated_audio') {
-            setViewerAudio({ src: url, prompt: doc.filename });
+        } else {
+            setViewerAudio({ src: url, prompt: item.prompt });
             setAudioViewerOpen(true);
         }
     };
@@ -199,14 +187,12 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                 </div>
 
                 {activeSection === "explore" ? (
-                    /* Explore Modes Section - Premium Mode Cards */
                     <div className="flex flex-col flex-1 pb-12 w-full mt-2">
                         <div className="mb-8 px-2 lg:px-0">
                             <h3 className="text-[13px] font-medium text-white/40 uppercase tracking-widest">Available Modes</h3>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {/* Mode 1: Image Generation Advanced */}
                             <a href="#" className="group relative bg-white/[0.02] hover:bg-white/[0.04] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-white/5 hover:border-white/10 flex flex-col min-h-[180px]">
                                 <div className="flex justify-between items-start mb-6">
                                     <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-fuchsia-500/10 text-fuchsia-400 group-hover:bg-fuchsia-500/20 group-hover:text-fuchsia-300 transition-colors">
@@ -221,7 +207,6 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                 </div>
                             </a>
 
-                            {/* Mode 2: Text-to-Speech (TTS) */}
                             <Link href="/tts" className="group relative bg-white/[0.02] hover:bg-white/[0.04] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-white/5 hover:border-white/10 flex flex-col min-h-[180px]">
                                 <div className="flex justify-between items-start mb-6">
                                     <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 group-hover:text-emerald-300 transition-colors">
@@ -236,7 +221,6 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                 </div>
                             </Link>
 
-                            {/* Mode 3: Learning */}
                             <a href="#" className="group relative bg-transparent hover:bg-white/[0.02] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-transparent hover:border-white/10 flex flex-col min-h-[180px]">
                                 <div className="flex justify-between items-start mb-6 opacity-70 group-hover:opacity-100 transition-opacity">
                                     <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 group-hover:text-amber-300 transition-colors">
@@ -252,7 +236,6 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                 </div>
                             </a>
 
-                            {/* Mode 4: Deep Search */}
                             <a href="#" className="group relative bg-transparent hover:bg-white/[0.02] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-transparent hover:border-white/10 flex flex-col min-h-[180px]">
                                 <div className="flex justify-between items-start mb-6 opacity-70 group-hover:opacity-100 transition-opacity">
                                     <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 group-hover:bg-rose-500/20 group-hover:text-rose-300 transition-colors">
@@ -270,9 +253,7 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                         </div>
                     </div>
                 ) : (
-                    /* My Data Section */
                     <div className="flex flex-col flex-1">
-                        {/* Sub-tabs for Data */}
                         <div className="flex items-center gap-6 border-b border-white/5 pb-0 mb-8 shrink-0">
                             <button
                                 onClick={() => setActiveDataTab("generated")}
@@ -302,33 +283,36 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                             </button>
                         </div>
 
-                        {/* Empty States */}
-                        {!user || (user.is_anonymous && documents.length === 0) ? (
+                        {!user ? (
                             <div className="flex-1 flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl bg-white/[0.01]">
                                 <HardDrive className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
                                 <h3 className="text-lg font-medium text-white mb-2">Login Required</h3>
                                 <p className="text-white/40 text-[15px] max-w-sm mb-6">
-                                    Anonymous sessions cannot store locally. Please create an account to access the Library storage.
+                                    Please sign in to access the Library.
                                 </p>
                             </div>
-                        ) : filteredDocs.length === 0 ? (
+                        ) : activeDataTab === "generated" && generatedItems.length === 0 ? (
                             <div className="flex-1 flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl bg-white/[0.01]">
-                                {activeDataTab === "generated" ? <Sparkles className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} /> :
-                                    <FileText className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />}
-                                <h3 className="text-lg font-medium text-white mb-2">No {activeDataTab} found</h3>
+                                <Sparkles className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
+                                <h3 className="text-lg font-medium text-white mb-2">No generated content yet</h3>
                                 <p className="text-white/40 text-[15px] max-w-sm">
-                                    {activeDataTab === "generated" ? "Images and Audio you generate will automatically be saved and organized here." :
-                                        "Files and documents you upload directly into conversations will appear here for easy management."}
+                                    Images and audio you generate will automatically be saved and organized here.
+                                </p>
+                            </div>
+                        ) : activeDataTab === "documents" && documents.length === 0 ? (
+                            <div className="flex-1 flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl bg-white/[0.01]">
+                                <FileText className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
+                                <h3 className="text-lg font-medium text-white mb-2">No documents yet</h3>
+                                <p className="text-white/40 text-[15px] max-w-sm">
+                                    Files and documents you upload into conversations will appear here.
                                 </p>
                             </div>
                         ) : (
-                            /* Content Area */
                             <div className="pb-10">
                                 {activeDataTab === "documents" ? (
-                                    // Documents Grid
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                         <AnimatePresence mode="popLayout">
-                                            {filteredDocs.map((doc) => (
+                                            {documents.map((doc) => (
                                                 <motion.div
                                                     layout
                                                     initial={{ opacity: 0, scale: 0.95 }}
@@ -342,7 +326,7 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                                             <FileText size={20} strokeWidth={1.5} />
                                                         </div>
                                                         <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDelete(doc); }}
+                                                            onClick={(e) => { e.stopPropagation(); handleDeleteDocument(doc); }}
                                                             className="text-white/20 hover:text-red-400 hover:bg-red-400/10 p-2 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                                                             title="Delete file"
                                                         >
@@ -361,20 +345,19 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                         </AnimatePresence>
                                     </div>
                                 ) : (
-                                    // Image Masonry Gallery (CSS Columns approach for pure masonry)
                                     <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
                                         <AnimatePresence mode="popLayout">
-                                            {filteredDocs.map((doc) => (
+                                            {generatedItems.map((item) => (
                                                 <motion.div
                                                     layout
                                                     initial={{ opacity: 0, y: 20 }}
                                                     animate={{ opacity: 1, y: 0 }}
                                                     exit={{ opacity: 0, scale: 0.9 }}
-                                                    key={doc.id}
+                                                    key={item.id}
                                                     className="break-inside-avoid relative group rounded-xl overflow-hidden cursor-zoom-in bg-white/5 border border-white/5 mb-4"
-                                                    onClick={() => handleItemClick(doc)}
+                                                    onClick={() => handleItemClick(item)}
                                                 >
-                                                    {doc.extracted_text === 'generated_audio' ? (
+                                                    {item.type === "audio" ? (
                                                         <div className="w-full aspect-[4/3] bg-black/40 flex flex-col items-center justify-center p-6 border border-white/5 rounded-xl transition-colors group-hover:bg-black/60">
                                                             <div className="w-14 h-14 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-4 group-hover:scale-110 group-hover:bg-emerald-500 group-hover:text-white transition-all shadow-[0_0_15px_rgba(16,185,129,0.1)] group-hover:shadow-[0_0_20px_rgba(16,185,129,0.4)]">
                                                                 <Play size={24} className="ml-1" strokeWidth={2} />
@@ -388,17 +371,16 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                                     ) : (
                                                         /* eslint-disable-next-line @next/next/no-img-element */
                                                         <img
-                                                            src={getPublicUrl(doc)}
-                                                            alt={doc.filename}
+                                                            src={getSignedUrl(item.storage_path)}
+                                                            alt={item.prompt}
                                                             className="w-full h-auto block transform transition-transform duration-500 group-hover:scale-105"
                                                             loading="lazy"
                                                         />
                                                     )}
-                                                    {/* Hover Overlay */}
                                                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between p-3">
                                                         <div className="flex justify-end">
                                                             <button
-                                                                onClick={(e) => { e.stopPropagation(); handleDelete(doc); }}
+                                                                onClick={(e) => { e.stopPropagation(); handleDeleteGenerated(item); }}
                                                                 className="p-2 text-white/60 hover:text-red-400 hover:bg-red-400/20 rounded-lg backdrop-blur-md transition-all"
                                                                 title="Delete item"
                                                             >
@@ -407,11 +389,10 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                                                         </div>
                                                         <div>
                                                             <p className="text-xs text-white/80 line-clamp-2 drop-shadow-md">
-                                                                {doc.extracted_text === 'generated_audio' ? "Audio Generation" :
-                                                                    (doc.filename !== "image.png" && !doc.filename.startsWith("Generated Image") ? doc.filename : "AI Generation")}
+                                                                {item.type === "audio" ? "Audio Generation" : item.prompt}
                                                             </p>
                                                             <p className="text-[10px] text-white/50 mt-1">
-                                                                {new Date(doc.created_at).toLocaleDateString()}
+                                                                {new Date(item.created_at).toLocaleDateString()}
                                                             </p>
                                                         </div>
                                                     </div>

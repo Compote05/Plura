@@ -168,7 +168,7 @@ export default function TTSArea({ user }: { user: User | null }) {
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
 
-    const { activeThreadId: currentThreadId, setActiveThreadId: setCurrentThreadId } = useAppContext();
+    const { activeThreadId: currentThreadId, setActiveThreadId: setCurrentThreadId, lastUsedMode, setLastUsedMode } = useAppContext();
     const skipNextFetchRef = useRef(false);
 
     // Fetch Messages when thread changes
@@ -239,6 +239,7 @@ export default function TTSArea({ user }: { user: User | null }) {
             .insert([{
                 user_id: user.id,
                 title: title,
+                session_type: 'text_to_speech',
                 model: 'text-to-speech',
                 messages: initialMessages
             }])
@@ -279,6 +280,17 @@ export default function TTSArea({ user }: { user: User | null }) {
 
         if (!msgIdToRegenerate) setPrompt("");
         setIsGenerating(true);
+
+        // Clear Ollama VRAM if switching from chat to TTS
+        if (lastUsedMode === "chat") {
+            const { data: { session } } = await supabase.auth.getSession();
+            fetch("/api/vram/clear", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}) },
+                body: JSON.stringify({ target: "ollama" })
+            }).catch(() => {});
+        }
+        setLastUsedMode("text_to_speech");
 
         const reqSeed = metadataToRegenerate ? Math.floor(Math.random() * 1000000000) : Math.floor(Math.random() * 1000000000);
 
@@ -511,7 +523,7 @@ export default function TTSArea({ user }: { user: User | null }) {
                             ...newVariations[currentIndex],
                             status: "error" as const
                         };
-                        return { ...msg, status: "error" as const, content: msg.variations ? msg.content : "Failed to generate.", variations: newVariations };
+                        return { ...msg, status: "error" as const, content: "Failed to generate.", variations: newVariations };
                     }
                     return {
                         ...msg,
