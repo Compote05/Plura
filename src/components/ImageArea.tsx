@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Sparkles, ArrowUp, Square, ChevronDown, Layers, RectangleHorizontal, RectangleVertical, Info, RotateCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUp, Square, ChevronDown, Layers, RectangleHorizontal, RectangleVertical, Info, RotateCw, ChevronLeft, ChevronRight, ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -9,15 +9,20 @@ import { cn } from "@/lib/utils";
 import { useAppContext } from "@/context/AppContext";
 import ImageViewer from "./ImageViewer";
 
+
 interface MessageVariation {
-    status?: "generating" | "done" | "error";
+    status?: "generating" | "done" | "error" | "deleted";
     imageUrl?: string;
     metadata?: {
         model: string;
         seed: number | string;
         aspectRatio: string;
         steps: number;
-        time: number; // in seconds
+        cfgScale?: number;
+        sampler?: string;
+        width?: number;
+        height?: number;
+        time: number;
     };
 }
 
@@ -25,7 +30,7 @@ interface Message {
     id: string;
     role: "user" | "assistant";
     content: string;
-    status?: "generating" | "done" | "error";
+    status?: "generating" | "done" | "error" | "deleted";
     imageUrl?: string;
     metadata?: MessageVariation['metadata'];
     variations?: MessageVariation[];
@@ -36,103 +41,71 @@ export default function ImageArea({ user }: { user: User | null }) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [prompt, setPrompt] = useState("");
     const [isGenerating, setIsGenerating] = useState(false);
+    const [highlightId, setHighlightId] = useState<string | null>(null);
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [useAdvanced, setUseAdvanced] = useState(false);
+
+    const DEFAULT_SETTINGS = { steps: 8, seed: -1, sampler: "res_multistep", cfgScale: 1.0, width: 1024, height: 1024 };
+    const [aspectRatio, setAspectRatio] = useState<"square" | "landscape" | "vertical">("square");
+    const [advancedSettings, setAdvancedSettings] = useState({
+        steps: 8,
+        seed: -1,
+        sampler: "res_multistep",
+        cfgScale: 1.0,
+        width: 1024,
+        height: 1024,
+    });
+
+    const [viewerOpen, setViewerOpen] = useState(false);
+    const [viewerImage, setViewerImage] = useState<{ src: string; prompt: string } | null>(null);
 
     const { activeThreadId: currentThreadId, setActiveThreadId: setCurrentThreadId, lastUsedMode, setLastUsedMode } = useAppContext();
     const skipNextFetchRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-    // Form state
-    const [aspectRatio, setAspectRatio] = useState<"square" | "landscape" | "vertical">("square");
-    const [showAdvanced, setShowAdvanced] = useState(false);
-    const [advancedSettings, setAdvancedSettings] = useState({
-        steps: 4,
-        seed: -1,
-        sampler: "euler",
-        cfgScale: 1.0,
-    });
-
-    // Viewer state
-    const [viewerOpen, setViewerOpen] = useState(false);
-    const [viewerImage, setViewerImage] = useState<{ src: string, prompt: string } | null>(null);
-
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+    const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     useEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
-            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
         }
     }, [prompt]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            if (prompt.trim() && !isGenerating) {
-                handleGenerate();
-            }
+            if (prompt.trim() && !isGenerating) handleGenerate();
         }
     };
 
-
-
-    // Fetch Messages when thread changes
     useEffect(() => {
-        if (!currentThreadId) {
-            setMessages([]);
-            return;
-        }
-
-        if (skipNextFetchRef.current) {
-            skipNextFetchRef.current = false;
-            return;
-        }
+        if (!currentThreadId) { setMessages([]); setHighlightId(null); return; }
+        if (skipNextFetchRef.current) { skipNextFetchRef.current = false; return; }
 
         const fetchMessages = async () => {
-            const { data } = await supabase
-                .from('threads')
-                .select('messages')
-                .eq('id', currentThreadId)
-                .single();
-
-            if (data && data.messages) {
+            const { data } = await supabase.from('threads').select('messages').eq('id', currentThreadId).single();
+            if (data?.messages) {
                 const { data: { session } } = await supabase.auth.getSession();
                 const token = session?.access_token;
-
-                // Resolve proxy URLs (/api/library/...) to signed URLs for display
                 const resolveUrl = async (url: string | undefined): Promise<string | undefined> => {
                     if (!url?.startsWith('/api/library/')) return url;
                     try {
-                        const res = await fetch(url, {
-                            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                        });
-                        if (res.ok) {
-                            const { signedUrl } = await res.json();
-                            return signedUrl;
-                        }
-                    } catch (err) {
-                        console.error("Failed to resolve signed URL:", err);
-                    }
+                        const res = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+                        if (res.ok) { const { signedUrl } = await res.json(); return signedUrl; }
+                    } catch { }
                     return url;
                 };
-
-                const mappedMessages = await Promise.all((data.messages as Message[]).map(async (msg) => {
-                    const newUrl = await resolveUrl(msg.imageUrl);
-                    const newVariations = msg.variations ? await Promise.all(msg.variations.map(async (v) => ({
-                        ...v,
-                        imageUrl: await resolveUrl(v.imageUrl)
-                    }))) : undefined;
-                    return { ...msg, imageUrl: newUrl, variations: newVariations };
-                }));
-
-                setMessages(mappedMessages);
+                const mapped = await Promise.all((data.messages as Message[]).map(async (msg) => ({
+                    ...msg,
+                    imageUrl: await resolveUrl(msg.imageUrl),
+                    variations: msg.variations ? await Promise.all(msg.variations.map(async (v) => ({ ...v, imageUrl: await resolveUrl(v.imageUrl) }))) : undefined
+                })));
+                setMessages(mapped);
+                const lastAssistant = mapped.filter(m => m.role === "assistant").at(-1);
+                if (lastAssistant) {
+                    setHighlightId(lastAssistant.id);
+                    setTimeout(() => itemRefs.current[lastAssistant.id]?.scrollIntoView({ behavior: "instant", block: "center" }), 50);
+                }
             } else {
                 setMessages([]);
             }
@@ -140,66 +113,45 @@ export default function ImageArea({ user }: { user: User | null }) {
         fetchMessages();
     }, [currentThreadId]);
 
-
-
     const createNewThread = async (firstPrompt: string, initialMessages: Message[]) => {
         if (!user) return null;
-        let title = firstPrompt.slice(0, 30);
-        if (firstPrompt.length > 30) title += "...";
-
-        const { data } = await supabase
-            .from('threads')
-            .insert([{
-                user_id: user.id,
-                title: title,
-                session_type: 'image_generation',
-                model: 'image-generation',
-                messages: initialMessages
-            }])
-            .select()
-            .single();
-
-        if (data) {
-            skipNextFetchRef.current = true;
-            setCurrentThreadId(data.id);
-            return data.id;
-        }
+        const title = firstPrompt.slice(0, 30) + (firstPrompt.length > 30 ? "..." : "");
+        const { data } = await supabase.from('threads').insert([{
+            user_id: user.id, title, session_type: 'image_generation', model: 'image-generation', messages: initialMessages
+        }]).select().single();
+        if (data) { skipNextFetchRef.current = true; setCurrentThreadId(data.id); return data.id; }
         return null;
     };
 
     const handleUpdateThreadMessages = async (threadId: string, updatedMessages: Message[]) => {
         if (!user) return;
-        await supabase
-            .from('threads')
-            .update({ messages: updatedMessages })
-            .eq('id', threadId)
-            .eq('user_id', user.id);
+        await supabase.from('threads').update({ messages: updatedMessages }).eq('id', threadId).eq('user_id', user.id);
     };
 
-
-    const handleGenerate = async (e?: React.FormEvent, msgIdToRegenerate?: string, overridePrompt?: string, metadataToRegenerate?: MessageVariation['metadata']) => {
+    const handleGenerate = async (e?: React.FormEvent, msgIdToRegenerate?: string, overridePrompt?: string, overrideParams?: { aspectRatio?: string; steps?: number; cfgScale?: number; sampler?: string; width?: number; height?: number; seed?: number }) => {
         if (e) e.preventDefault();
-
         const currentPrompt = overridePrompt || prompt;
         if (!currentPrompt.trim() || isGenerating) return;
-
         if (!msgIdToRegenerate) setPrompt("");
         setIsGenerating(true);
 
-        // Clear Ollama VRAM if switching from chat to image generation
         if (lastUsedMode === "chat") {
             const { data: { session } } = await supabase.auth.getSession();
             fetch("/api/vram/clear", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}) },
                 body: JSON.stringify({ target: "ollama" })
-            }).catch(() => {});
+            }).catch(() => { });
         }
         setLastUsedMode("image_generation");
 
-        const reqAspectRatio = metadataToRegenerate?.aspectRatio || aspectRatio;
-        const reqSteps = metadataToRegenerate?.steps || advancedSettings.steps;
-        const reqSeed = metadataToRegenerate ? Math.floor(Math.random() * 1000000000) : (advancedSettings.seed === -1 ? Math.floor(Math.random() * 1000000000) : advancedSettings.seed);
+        const effectiveAspectRatio = (overrideParams?.aspectRatio as typeof aspectRatio) ?? aspectRatio;
+        const effectiveSteps = overrideParams?.steps ?? advancedSettings.steps;
+        const effectiveCfg = overrideParams?.cfgScale ?? advancedSettings.cfgScale;
+        const effectiveSampler = overrideParams?.sampler ?? advancedSettings.sampler;
+        const effectiveWidth = overrideParams?.width ?? advancedSettings.width;
+        const effectiveHeight = overrideParams?.height ?? advancedSettings.height;
+        const reqSeed = Math.floor(Math.random() * 1000000000);
 
         let newMessagesState: Message[];
         let asstMsgId: string;
@@ -207,44 +159,28 @@ export default function ImageArea({ user }: { user: User | null }) {
         if (msgIdToRegenerate) {
             asstMsgId = msgIdToRegenerate;
             newMessagesState = messages.map(msg => {
-                if (msg.id === msgIdToRegenerate) {
-                    const baseVariation: MessageVariation = {
-                        status: msg.status,
-                        imageUrl: msg.imageUrl,
-                        metadata: msg.metadata
-                    };
-                    const variations = msg.variations || [baseVariation];
-                    return {
-                        ...msg,
-                        status: "generating",
-                        variations: [...variations, { status: "generating" }],
-                        currentVariationIndex: variations.length
-                    };
-                }
-                return msg;
+                if (msg.id !== msgIdToRegenerate) return msg;
+                const baseVariation: MessageVariation = { status: msg.status, imageUrl: msg.imageUrl, metadata: msg.metadata };
+                const variations = msg.variations || [baseVariation];
+                return { ...msg, status: "generating", variations: [...variations, { status: "generating" }], currentVariationIndex: variations.length };
             });
         } else {
             const userMsgId = Date.now().toString();
             asstMsgId = (Date.now() + 1).toString();
-
-            const userMessage: Message = { id: userMsgId, role: "user", content: currentPrompt };
-            const asstMessage: Message = { id: asstMsgId, role: "assistant", content: currentPrompt, status: "generating" };
-
             newMessagesState = [
                 ...messages,
-                userMessage,
-                asstMessage
+                { id: userMsgId, role: "user", content: currentPrompt },
+                { id: asstMsgId, role: "assistant", content: currentPrompt, status: "generating" }
             ];
         }
 
         setMessages(newMessagesState);
+        setHighlightId(asstMsgId);
+        setTimeout(() => itemRefs.current[asstMsgId]?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
 
         let activeThreadId = currentThreadId;
-        if (!activeThreadId) {
-            activeThreadId = await createNewThread(currentPrompt, newMessagesState);
-        } else {
-            await handleUpdateThreadMessages(activeThreadId, newMessagesState);
-        }
+        if (!activeThreadId) activeThreadId = await createNewThread(currentPrompt, newMessagesState);
+        else await handleUpdateThreadMessages(activeThreadId, newMessagesState);
 
         const startTime = Date.now();
 
@@ -254,471 +190,400 @@ export default function ImageArea({ user }: { user: User | null }) {
 
             const res = await fetch('/api/imgen/generate', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
+                headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
                 body: JSON.stringify({
                     prompt: currentPrompt,
-                    aspectRatio: reqAspectRatio,
+                    aspectRatio: effectiveAspectRatio,
+                    ...(useAdvanced || overrideParams ? {
+                        steps: effectiveSteps,
+                        seed: reqSeed,
+                        sampler: effectiveSampler,
+                        cfgScale: effectiveCfg,
+                        width: effectiveWidth,
+                        height: effectiveHeight,
+                    } : {})
                 })
             });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || "Failed to start generation");
-            }
-
+            if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed"); }
             const { prompt_id } = await res.json();
 
             let isDone = false;
             let finalImageUrl = "";
-
             while (!isDone) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-
-                const statusRes = await fetch(`/api/imgen/status?prompt_id=${prompt_id}`, {
-                    headers: {
-                        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                    }
-                });
-                const statusData = await statusRes.json();
-
-                if (statusData.status === 'done') {
-                    finalImageUrl = statusData.imageUrl;
-                    isDone = true;
-                } else if (statusData.status === 'error') {
-                    throw new Error(statusData.error || "Generation error");
-                }
+                await new Promise(r => setTimeout(r, 2000));
+                const s = await fetch(`/api/imgen/status?prompt_id=${prompt_id}`, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+                const sd = await s.json();
+                if (sd.status === 'done') { finalImageUrl = sd.imageUrl; isDone = true; }
+                else if (sd.status === 'error') throw new Error(sd.error || "Generation error");
             }
 
-            const timeTaken = (Date.now() - startTime) / 1000;
+            const metadata = { model: "Flux.1", seed: reqSeed, aspectRatio: effectiveAspectRatio, steps: effectiveSteps, cfgScale: effectiveCfg, sampler: effectiveSampler, width: effectiveWidth, height: effectiveHeight, time: parseFloat(((Date.now() - startTime) / 1000).toFixed(1)) };
 
-            const metadata = {
-                model: "Flux.1",
-                seed: reqSeed,
-                aspectRatio: reqAspectRatio,
-                steps: reqSteps,
-                time: parseFloat(timeTaken.toFixed(1))
-            };
-
-            // 1. Instantly display the image from ComfyUI locally
             let messagesAfterGen = newMessagesState.map((msg): Message => {
-                if (msg.id === asstMsgId) {
-                    if (msg.variations) {
-                        const newVariations = [...msg.variations];
-                        const currentIndex = msg.currentVariationIndex ?? 0;
-                        newVariations[currentIndex] = {
-                            status: "done" as const,
-                            imageUrl: finalImageUrl,
-                            metadata: metadata
-                        };
-                        return {
-                            ...msg,
-                            status: "done" as const,
-                            imageUrl: finalImageUrl,
-                            metadata: metadata,
-                            variations: newVariations
-                        };
-                    } else {
-                        return {
-                            ...msg,
-                            status: "done" as const,
-                            imageUrl: finalImageUrl,
-                            metadata: metadata
-                        };
-                    }
+                if (msg.id !== asstMsgId) return msg;
+                if (msg.variations) {
+                    const nv = [...msg.variations];
+                    nv[msg.currentVariationIndex ?? 0] = { status: "done", imageUrl: finalImageUrl, metadata };
+                    return { ...msg, status: "done", imageUrl: finalImageUrl, metadata, variations: nv };
                 }
-                return msg;
+                return { ...msg, status: "done", imageUrl: finalImageUrl, metadata };
             });
-
             setMessages(messagesAfterGen);
 
-            // 2. Perform background save to DB and Storage
             if (activeThreadId && user && finalImageUrl) {
                 try {
                     const saveRes = await fetch('/api/imgen/save', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                        },
-                        body: JSON.stringify({
-                            imageUrl: finalImageUrl,
-                            prompt: currentPrompt,
-                            metadata: metadata
-                        })
+                        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+                        body: JSON.stringify({ imageUrl: finalImageUrl, prompt: currentPrompt, metadata })
                     });
                     if (saveRes.ok) {
                         const saveData = await saveRes.json();
                         if (saveData.permanentUrl) {
-                            // Resolve the permanent proxy URL to a signed URL for immediate display
-                            let displayUrl = finalImageUrl; // fallback to ComfyUI URL
+                            let displayUrl = finalImageUrl;
                             try {
-                                const signedRes = await fetch(saveData.permanentUrl, {
-                                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                                });
-                                if (signedRes.ok) {
-                                    const { signedUrl } = await signedRes.json();
-                                    displayUrl = signedUrl;
-                                }
-                            } catch (err) {
-                                console.error("Failed to resolve signed URL:", err);
-                            }
-
-                            // Update display with signed URL, but store permanent proxy URL in DB
+                                const sr = await fetch(saveData.permanentUrl, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+                                if (sr.ok) { const { signedUrl } = await sr.json(); displayUrl = signedUrl; }
+                            } catch { }
                             const permanentUrl = saveData.permanentUrl;
-
-                            // Update local state with display URL
-                            const displayMessages = messagesAfterGen.map((msg): Message => {
-                                if (msg.id === asstMsgId) {
-                                    if (msg.variations) {
-                                        const newVariations = [...msg.variations];
-                                        const currentIndex = msg.currentVariationIndex ?? 0;
-                                        newVariations[currentIndex] = { ...newVariations[currentIndex], imageUrl: displayUrl };
-                                        return { ...msg, imageUrl: displayUrl, variations: newVariations };
-                                    }
-                                    return { ...msg, imageUrl: displayUrl };
-                                }
-                                return msg;
-                            });
-                            setMessages(displayMessages);
-
-                            // Store permanent proxy URL in DB (not the signed URL which expires)
+                            setMessages(messagesAfterGen.map((msg): Message => {
+                                if (msg.id !== asstMsgId) return msg;
+                                if (msg.variations) { const nv = [...msg.variations]; nv[msg.currentVariationIndex ?? 0] = { ...nv[msg.currentVariationIndex ?? 0], imageUrl: displayUrl }; return { ...msg, imageUrl: displayUrl, variations: nv }; }
+                                return { ...msg, imageUrl: displayUrl };
+                            }));
                             messagesAfterGen = messagesAfterGen.map((msg): Message => {
-                                if (msg.id === asstMsgId) {
-                                    if (msg.variations) {
-                                        const newVariations = [...msg.variations];
-                                        const currentIndex = msg.currentVariationIndex ?? 0;
-                                        newVariations[currentIndex] = { ...newVariations[currentIndex], imageUrl: permanentUrl };
-                                        return { ...msg, imageUrl: permanentUrl, variations: newVariations };
-                                    }
-                                    return { ...msg, imageUrl: permanentUrl };
-                                }
-                                return msg;
+                                if (msg.id !== asstMsgId) return msg;
+                                if (msg.variations) { const nv = [...msg.variations]; nv[msg.currentVariationIndex ?? 0] = { ...nv[msg.currentVariationIndex ?? 0], imageUrl: permanentUrl }; return { ...msg, imageUrl: permanentUrl, variations: nv }; }
+                                return { ...msg, imageUrl: permanentUrl };
                             });
                         }
                     }
-                } catch (e) {
-                    console.error("Failed to permanently save image to storage", e);
-                    // Don't persist raw ComfyUI URL in DB — clear imageUrl so it won't break on IP change
+                } catch {
                     messagesAfterGen = messagesAfterGen.map((msg): Message => {
                         if (msg.id !== asstMsgId) return msg;
-                        const newVariations = msg.variations?.map((v, i) =>
-                            i === (msg.currentVariationIndex ?? 0) ? { ...v, status: "error" as const, imageUrl: undefined } : v
-                        );
-                        return { ...msg, status: "error" as const, imageUrl: undefined, ...(newVariations && { variations: newVariations }) };
+                        const nv = msg.variations?.map((v, i) => i === (msg.currentVariationIndex ?? 0) ? { ...v, status: "error" as const, imageUrl: undefined } : v);
+                        return { ...msg, status: "error", imageUrl: undefined, ...(nv && { variations: nv }) };
                     });
                     setMessages(messagesAfterGen);
                 }
-
-                if (activeThreadId) {
-                    await handleUpdateThreadMessages(activeThreadId, messagesAfterGen);
-                }
+                if (activeThreadId) await handleUpdateThreadMessages(activeThreadId, messagesAfterGen);
             }
 
             setIsGenerating(false);
-
         } catch (error) {
-            console.error("Image generation failed:", error);
-            const messagesAfterError = newMessagesState.map((msg): Message => {
-                if (msg.id === asstMsgId) {
-                    if (msg.variations) {
-                        const newVariations = [...msg.variations];
-                        const currentIndex = msg.currentVariationIndex ?? 0;
-                        newVariations[currentIndex] = {
-                            ...newVariations[currentIndex],
-                            status: "error" as const
-                        };
-                        return { ...msg, status: "error" as const, content: msg.variations ? msg.content : "Failed to generate image. Please try again.", variations: newVariations };
-                    }
-                    return {
-                        ...msg,
-                        status: "error" as const,
-                        content: "Failed to generate image. Please try again."
-                    }
-                }
-                return msg;
-            });
-
-            setMessages(messagesAfterError);
+            console.error("Generation failed:", error);
+            setMessages(newMessagesState.map((msg): Message => {
+                if (msg.id !== asstMsgId) return msg;
+                if (msg.variations) { const nv = [...msg.variations]; nv[msg.currentVariationIndex ?? 0] = { ...nv[msg.currentVariationIndex ?? 0], status: "error" }; return { ...msg, status: "error", variations: nv }; }
+                return { ...msg, status: "error", content: "Failed to generate." };
+            }));
             setIsGenerating(false);
-
-            if (activeThreadId) {
-                await handleUpdateThreadMessages(activeThreadId, messagesAfterError);
-            }
         }
     };
 
-    const handleImageClick = (src: string, promptText: string) => {
-        setViewerImage({ src, prompt: promptText });
-        setViewerOpen(true);
-    };
+    const feedRef = useRef<HTMLDivElement>(null);
+
+    // Sync filmstrip highlight with scroll position
+    useEffect(() => {
+        const feed = feedRef.current;
+        if (!feed) return;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const visible = entries.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+                if (visible.length > 0) setHighlightId(visible[0].target.getAttribute('data-id'));
+            },
+            { root: feed, threshold: 0.5 }
+        );
+        Object.entries(itemRefs.current).forEach(([, el]) => { if (el) observer.observe(el); });
+        return () => observer.disconnect();
+    }, [messages]);
+
+    const assistantMessages = messages.filter(m => m.role === "assistant");
 
     return (
-        <div className="relative h-full w-full flex flex-col pt-6 items-center overflow-hidden">
+        <div className="h-full w-full flex flex-col overflow-hidden">
 
-            {/* Removed the History Overlay Dropdown - now handled by the main Sidebar */}
+            {/* Main area: feed + right filmstrip */}
+            <div className="flex-1 flex overflow-hidden min-h-0">
 
-            {messages.length === 0 ? (
-                // Initial State
-                <div className="flex-1 w-full flex flex-col items-center justify-center p-8">
-                    <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.02] border border-white/[0.05] shadow-sm mb-6"
-                    >
-                        <Sparkles size={28} className="text-white/60" />
-                    </motion.div>
-                    <h2 className="text-3xl font-semibold text-white tracking-tight mb-2">Image Studio</h2>
-                    <p className="text-white/40 text-[15px] max-w-md text-center">
-                        Describe your vision in detail to generate high-fidelity images using premium models.
-                    </p>
-                </div>
-            ) : (
-                // Chat Area
-                <div className="flex-1 w-full overflow-y-auto custom-scrollbar px-4">
-                    <div className="max-w-3xl mx-auto flex flex-col gap-8 pb-36 pt-10">
-                        {messages.map((msg) => {
-                            const variations = msg.variations || [{ status: msg.status, imageUrl: msg.imageUrl, metadata: msg.metadata }];
-                            const currentVarIndex = msg.currentVariationIndex || 0;
-                            const currentVariation = variations[currentVarIndex] || variations[0];
+                {/* Feed */}
+                <div ref={feedRef} className="flex-1 overflow-y-auto custom-scrollbar">
+                    {assistantMessages.length === 0 ? (
+                        <div className="h-full flex items-center justify-center">
+                            <p className="text-sm text-foreground/25">Describe what you want to generate</p>
+                        </div>
+                    ) : (
+                        <div className="py-6 pb-8 px-6 flex flex-col gap-6 max-w-sm mx-auto">
+                            {assistantMessages.map((msg) => {
+                                const userMsg = messages[messages.indexOf(msg) - 1];
+                                const entryPrompt = userMsg?.content ?? msg.content;
+                                const variations = msg.variations || [{ status: msg.status, imageUrl: msg.imageUrl, metadata: msg.metadata }];
+                                const currentVarIndex = msg.currentVariationIndex ?? 0;
+                                const currentVar = variations[currentVarIndex] || variations[0];
+                                const isHighlighted = msg.id === highlightId;
 
-                            const handlePrevVar = () => {
-                                setMessages(prev => prev.map(m => {
-                                    if (m.id === msg.id && m.variations) {
-                                        return { ...m, currentVariationIndex: Math.max(0, (m.currentVariationIndex || 0) - 1) };
-                                    }
-                                    return m;
-                                }));
-                            };
+                                const handlePrevVar = () => setMessages(prev => prev.map(m =>
+                                    m.id === msg.id && m.variations ? { ...m, currentVariationIndex: Math.max(0, (m.currentVariationIndex ?? 0) - 1) } : m
+                                ));
+                                const handleNextVar = () => setMessages(prev => prev.map(m =>
+                                    m.id === msg.id && m.variations ? { ...m, currentVariationIndex: Math.min(m.variations.length - 1, (m.currentVariationIndex ?? 0) + 1) } : m
+                                ));
 
-                            const handleNextVar = () => {
-                                setMessages(prev => prev.map(m => {
-                                    if (m.id === msg.id && m.variations) {
-                                        return { ...m, currentVariationIndex: Math.min(m.variations.length - 1, (m.currentVariationIndex || 0) + 1) };
-                                    }
-                                    return m;
-                                }));
-                            };
+                                return (
+                                    <div
+                                        key={msg.id}
+                                        ref={el => { itemRefs.current[msg.id] = el; }}
+                                        data-id={msg.id}
+                                        className={cn("flex flex-col gap-2 transition-opacity duration-300", isHighlighted ? "opacity-100" : "opacity-70 hover:opacity-100")}
+                                        onClick={() => setHighlightId(msg.id)}
+                                    >
+                                        {/* Prompt */}
+                                        <p className="text-xs text-foreground/45 leading-relaxed">{entryPrompt}</p>
 
-                            return (
-                                <motion.div
-                                    key={msg.id}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className={cn(
-                                        "flex w-full",
-                                        msg.role === "user" ? "justify-end" : "justify-start"
-                                    )}
-                                >
-                                    {msg.role === "user" ? (
-                                        <div className="max-w-[80%] px-5 py-3.5 rounded-2xl bg-white/[0.04] text-white text-[15px] leading-relaxed border border-white/[0.05]">
-                                            <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                                        {/* Image */}
+                                        <div className="rounded-xl overflow-hidden border border-border bg-card">
+                                            {currentVar.status === "generating" && (
+                                                <div className={cn(
+                                                    "w-full bg-foreground/[0.02] flex items-center justify-center gap-2",
+                                                    aspectRatio === "landscape" ? "aspect-video" : aspectRatio === "vertical" ? "aspect-[9/16]" : "aspect-square"
+                                                )}>
+                                                    <div className="w-4 h-4 rounded-full border border-foreground/20 border-t-foreground/50 animate-spin" />
+                                                    <span className="text-xs text-foreground/25">Generating</span>
+                                                </div>
+                                            )}
+                                            {currentVar.status === "error" && (
+                                                <div className="aspect-square flex items-center justify-center">
+                                                    <span className="text-xs text-red-400/50">Failed</span>
+                                                </div>
+                                            )}
+                                            {currentVar.status === "deleted" && (
+                                                <div className={cn(
+                                                    "w-full bg-foreground/[0.02] border-dashed flex items-center justify-center gap-2",
+                                                    currentVar.metadata?.aspectRatio === "landscape" ? "aspect-video" : currentVar.metadata?.aspectRatio === "vertical" ? "aspect-[9/16]" : "aspect-square"
+                                                )}>
+                                                    <span className="text-xs text-foreground/25">Deleted image</span>
+                                                </div>
+                                            )}
+                                            {currentVar.status === "done" && currentVar.imageUrl && (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img
+                                                    src={currentVar.imageUrl}
+                                                    alt={entryPrompt}
+                                                    className="w-full h-auto block cursor-zoom-in"
+                                                    onClick={(e) => { e.stopPropagation(); setViewerImage({ src: currentVar.imageUrl!, prompt: entryPrompt }); setViewerOpen(true); }}
+                                                />
+                                            )}
                                         </div>
-                                    ) : (
-                                        <div className="flex flex-col w-full max-w-[85%]">
-                                            {currentVariation.status === "generating" && (
-                                                <div className="flex items-center gap-3 text-white/50 text-[14px] px-1 py-1.5">
-                                                    <div className="relative flex items-center justify-center w-4 h-4">
-                                                        <div className="absolute inset-0 rounded-full border border-white/10" />
-                                                        <div className="absolute inset-0 rounded-full border border-white/50 border-t-transparent animate-spin" />
-                                                    </div>
-                                                    <span className="font-medium">Generating image...</span>
-                                                </div>
-                                            )}
-                                            {currentVariation.status === "error" && (
-                                                <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                                                    {msg.content}
-                                                </div>
-                                            )}
-                                            {currentVariation.status === "done" && currentVariation.imageUrl && (
-                                                <div className="group flex flex-col gap-3 items-start">
-                                                    <div
-                                                        className="relative cursor-zoom-in overflow-hidden rounded-xl border border-white/[0.08] shadow-sm transition-transform hover:scale-[1.01] bg-black/20"
-                                                        onClick={() => handleImageClick(currentVariation.imageUrl!, msg.content)}
+
+                                        {/* Actions */}
+                                        {currentVar.status !== "generating" && (
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-1">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleGenerate(undefined, msg.id, entryPrompt, currentVar.metadata ? { aspectRatio: currentVar.metadata.aspectRatio, steps: currentVar.metadata.steps, cfgScale: currentVar.metadata.cfgScale, sampler: currentVar.metadata.sampler, width: currentVar.metadata.width, height: currentVar.metadata.height } : undefined); }}
+                                                        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-foreground/35 hover:text-foreground/65 hover:bg-accent transition-colors"
                                                     >
-                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                        <img
-                                                            src={currentVariation.imageUrl}
-                                                            alt={msg.content}
-                                                            className={cn(
-                                                                "object-contain w-auto h-auto max-h-[60vh]",
-                                                                currentVariation.metadata?.aspectRatio === "landscape" ? "aspect-video"
-                                                                    : currentVariation.metadata?.aspectRatio === "vertical" ? "aspect-[9/16]"
-                                                                        : "aspect-square"
-                                                            )}
-                                                            style={{ maxWidth: "100%" }}
-                                                        />
-                                                    </div>
-
-                                                    {currentVariation.metadata && (
-                                                        <div className="flex items-center gap-1.5 px-0.5 mt-0.5">
-                                                            <button
-                                                                onClick={() => handleGenerate(undefined, msg.id, msg.content)}
-                                                                className="p-1 text-white/30 hover:text-white/80 transition-colors"
-                                                                title="Regenerate"
-                                                            >
-                                                                <RotateCw size={14} />
+                                                        <RotateCw size={11} /> Retry
+                                                    </button>
+                                                    {currentVar.metadata && (
+                                                        <div className="relative group/info">
+                                                            <button className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-foreground/35 hover:text-foreground/65 hover:bg-accent transition-colors">
+                                                                <Info size={11} /> {currentVar.metadata.time}s
                                                             </button>
-
-                                                            <div className="relative group/info flex items-center">
-                                                                <button className="p-1 text-white/30 hover:text-white/80 transition-colors">
-                                                                    <Info size={14} />
-                                                                </button>
-                                                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 bg-[#141414] border border-white/10 rounded-xl px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.8)] opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all whitespace-nowrap z-20 pointer-events-none">
-                                                                    <div className="flex flex-col gap-1.5 text-[12px] text-white/70 font-mono">
-                                                                        <span>Model: <span className="text-white font-medium">{currentVariation.metadata.model}</span></span>
-                                                                        <span>Steps: <span className="text-white font-medium">{currentVariation.metadata.steps}</span></span>
-                                                                        <span>Seed: <span className="text-white font-medium">{currentVariation.metadata.seed}</span></span>
-                                                                        <span>Time: <span className="text-white font-medium">{currentVariation.metadata.time}s</span></span>
-                                                                    </div>
+                                                            <div className="absolute left-0 bottom-full mb-1.5 bg-card border border-border rounded-lg px-3 py-2 shadow-xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all whitespace-nowrap z-20 pointer-events-none">
+                                                                <div className="flex flex-col gap-0.5 text-[11px] text-foreground/50 font-mono">
+                                                                    <span>Model <span className="text-foreground/75 ml-2">{currentVar.metadata.model}</span></span>
+                                                                    <span>Steps <span className="text-foreground/75 ml-2">{currentVar.metadata.steps}</span></span>
+                                                                    <span>Seed <span className="text-foreground/75 ml-2">{currentVar.metadata.seed}</span></span>
                                                                 </div>
-                                                                {/* Tooltip Arrow */}
-                                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#1a1d29]" />
                                                             </div>
-
-                                                            {variations.length > 1 && (
-                                                                <div className="flex items-center gap-1.5 text-[11px] text-white/50 bg-white/5 rounded-md px-1 py-0.5 ml-1 border border-white/5">
-                                                                    <button onClick={handlePrevVar} disabled={currentVarIndex === 0} className="hover:text-white disabled:opacity-30 disabled:hover:text-white/50 p-0.5" title="Previous version">
-                                                                        <ChevronLeft size={13} />
-                                                                    </button>
-                                                                    <span className="font-medium select-none">{currentVarIndex + 1}/{variations.length}</span>
-                                                                    <button onClick={handleNextVar} disabled={currentVarIndex === variations.length - 1} className="hover:text-white disabled:opacity-30 disabled:hover:text-white/50 p-0.5" title="Next version">
-                                                                        <ChevronRight size={13} />
-                                                                    </button>
-                                                                </div>
-                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
-                                            )}
+
+                                                {variations.length > 1 && (
+                                                    <div className="flex items-center gap-0.5">
+                                                        <button onClick={(e) => { e.stopPropagation(); handlePrevVar(); }} disabled={currentVarIndex === 0} className="p-1 text-foreground/30 hover:text-foreground/65 disabled:opacity-20 transition-colors">
+                                                            <ChevronLeft size={13} />
+                                                        </button>
+                                                        <span className="text-[11px] text-foreground/30 select-none tabular-nums">{currentVarIndex + 1}/{variations.length}</span>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleNextVar(); }} disabled={currentVarIndex === variations.length - 1} className="p-1 text-foreground/30 hover:text-foreground/65 disabled:opacity-20 transition-colors">
+                                                            <ChevronRight size={13} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                {/* Filmstrip — right vertical strip */}
+                {assistantMessages.length > 0 && (
+                    <div className="w-[72px] border-l border-border overflow-y-auto custom-scrollbar flex flex-col gap-2 p-2 shrink-0">
+                        {assistantMessages.map((msg) => {
+                            const v = msg.variations ? (msg.variations[msg.currentVariationIndex ?? 0] ?? msg.variations[0]) : { status: msg.status, imageUrl: msg.imageUrl };
+                            const isActive = msg.id === highlightId;
+                            return (
+                                <button
+                                    key={msg.id}
+                                    onClick={() => {
+                                        setHighlightId(msg.id);
+                                        itemRefs.current[msg.id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+                                    }}
+                                    className={cn(
+                                        "w-full aspect-square rounded-lg overflow-hidden border-2 shrink-0 transition-all duration-150",
+                                        isActive ? "border-foreground/50" : "border-transparent opacity-40 hover:opacity-70"
+                                    )}
+                                >
+                                    {v.status === "done" && v.imageUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={v.imageUrl} alt="" className="w-full h-full object-cover" />
+                                    ) : v.status === "generating" ? (
+                                        <div className="w-full h-full bg-foreground/5 flex items-center justify-center">
+                                            <div className="w-3 h-3 rounded-full border border-foreground/30 border-t-foreground/60 animate-spin" />
+                                        </div>
+                                    ) : v.status === "deleted" ? (
+                                        <div className="w-full h-full bg-foreground/[0.02] flex items-center justify-center">
+                                            <ImageIcon size={12} className="text-foreground/15" />
+                                        </div>
+                                    ) : (
+                                        <div className="w-full h-full bg-foreground/5 flex items-center justify-center">
+                                            <ImageIcon size={12} className="text-foreground/20" />
                                         </div>
                                     )}
-                                </motion.div>
+                                </button>
                             );
                         })}
-                        <div ref={messagesEndRef} className="h-4" />
                     </div>
-                </div>
-            )}
+                )}
+            </div>
 
-            {/* Input Area */}
-            <div className="w-full shrink-0 px-4 pb-8 absolute bottom-0 bg-gradient-to-t from-background via-background/80 to-transparent z-10 pt-10 pointer-events-none">
-                <div className="max-w-3xl mx-auto w-full flex flex-col gap-2 pointer-events-auto">
-                    {/* Advanced Params Toggle Menu */}
+            {/* Input bar */}
+            <div className="shrink-0 pb-6">
+                <div className="max-w-3xl mx-auto flex flex-col gap-2">
                     <AnimatePresence>
                         {showAdvanced && (
                             <motion.div
-                                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 10, scale: 0.98 }}
-                                className="mb-2 bg-sidebar/95 backdrop-blur-xl border border-white/[0.08] rounded-2xl overflow-hidden shadow-lg p-5"
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 4 }}
+                                transition={{ duration: 0.12 }}
+                                className="bg-card border border-border rounded-xl p-3 flex flex-col gap-3"
                             >
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider">Steps</label>
-                                        <input
-                                            type="number"
-                                            value={advancedSettings.steps}
-                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, steps: parseInt(e.target.value) || 20 }))}
-                                            className="bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-white/20 transition-colors"
-                                        />
+                                {/* Header: toggle + reset */}
+                                <div className="flex items-center justify-between">
+                                    <button type="button" onClick={() => setUseAdvanced(v => !v)}
+                                        className="flex items-center gap-2 text-xs text-foreground/50 hover:text-foreground/80 transition-colors">
+                                        <div className={cn("w-7 h-4 rounded-full transition-colors relative", useAdvanced ? "bg-foreground/50" : "bg-foreground/15")}>
+                                            <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-background transition-all", useAdvanced ? "left-3.5" : "left-0.5")} />
+                                        </div>
+                                        <span>{useAdvanced ? "Custom settings" : "Workflow defaults"}</span>
+                                    </button>
+                                    <button type="button" onClick={() => setAdvancedSettings(DEFAULT_SETTINGS)}
+                                        className="text-[10px] text-foreground/25 hover:text-foreground/60 transition-colors">
+                                        Reset
+                                    </button>
+                                </div>
+
+                                <div className={cn("flex flex-col gap-3 transition-opacity", !useAdvanced && "opacity-30 pointer-events-none")}>
+                                {/* Row 1: Steps, CFG, Sampler */}
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">Steps</label>
+                                        <input type="number" step={1} min={1} max={50} value={advancedSettings.steps}
+                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, steps: e.target.value === "" ? "" as unknown as number : parseInt(e.target.value) }))}
+                                            onBlur={(e) => setAdvancedSettings(prev => ({ ...prev, steps: Math.min(50, Math.max(1, parseInt(e.target.value) || 8)) }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none w-full" />
                                     </div>
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider">Seed (-1 = Random)</label>
-                                        <input
-                                            type="number"
-                                            value={advancedSettings.seed}
-                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, seed: parseInt(e.target.value) || -1 }))}
-                                            className="bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-white/20 transition-colors"
-                                        />
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">CFG</label>
+                                        <input type="number" step={0.1} min={0} max={20} value={advancedSettings.cfgScale}
+                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, cfgScale: parseFloat(e.target.value) || 0 }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none w-full" />
                                     </div>
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider">CFG Scale</label>
-                                        <input
-                                            type="number"
-                                            step="0.1"
-                                            value={advancedSettings.cfgScale}
-                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, cfgScale: parseFloat(e.target.value) || 7.0 }))}
-                                            className="bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-white/20 transition-colors"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider">Sampler</label>
-                                        <select
-                                            value={advancedSettings.sampler}
-                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, sampler: e.target.value }))}
-                                            className="bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-white/20 transition-colors appearance-none"
-                                        >
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">Sampler</label>
+                                        <select value={advancedSettings.sampler} onChange={(e) => setAdvancedSettings(prev => ({ ...prev, sampler: e.target.value }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none appearance-none w-full">
+                                            <option value="res_multistep">Res Multistep</option>
                                             <option value="euler">Euler</option>
                                             <option value="euler_ancestral">Euler a</option>
                                             <option value="dpmpp_2m">DPM++ 2M</option>
                                         </select>
                                     </div>
                                 </div>
+
+                                {/* Row 2: Width, Height, Seed — with custom size toggle */}
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">Height</label>
+                                        <input type="number" step={64} min={256} max={2048} value={advancedSettings.height}
+                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, height: e.target.value === "" ? "" as unknown as number : parseInt(e.target.value) }))}
+                                            onBlur={(e) => setAdvancedSettings(prev => ({ ...prev, height: Math.min(2048, Math.max(256, parseInt(e.target.value) || 1024)) }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none w-full" />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">Width</label>
+                                        <input type="number" step={64} min={256} max={2048} value={advancedSettings.width}
+                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, width: e.target.value === "" ? "" as unknown as number : parseInt(e.target.value) }))}
+                                            onBlur={(e) => setAdvancedSettings(prev => ({ ...prev, width: Math.min(2048, Math.max(256, parseInt(e.target.value) || 1024)) }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none w-full" />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-foreground/40 uppercase tracking-wider">Seed</label>
+                                        <input type="number" step={1} min={-1} value={advancedSettings.seed}
+                                            onChange={(e) => setAdvancedSettings(prev => ({ ...prev, seed: parseInt(e.target.value) || -1 }))}
+                                            className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground/80 focus:outline-none w-full" />
+                                    </div>
+                                </div>
+                                </div>
                             </motion.div>
                         )}
                     </AnimatePresence>
 
-                    <form
-                        onSubmit={handleGenerate}
-                        className="bg-sidebar backdrop-blur-xl rounded-2xl relative flex items-center focus-within:ring-1 focus-within:ring-white/10 w-full border border-white/[0.08] shadow-lg"
-                    >
-                        <button
-                            type="button"
-                            onClick={() => setShowAdvanced(!showAdvanced)}
-                            className={cn(
-                                "pl-4 pr-2 hover:text-white/80 transition-colors shrink-0 flex items-center justify-center p-2 pl-5 rounded-lg",
-                                showAdvanced ? "text-white/80" : "text-white/30"
-                            )}
-                            title="Advanced parameters"
-                        >
-                            <Layers size={18} strokeWidth={1.5} />
-                        </button>
-
+                    <form onSubmit={handleGenerate} className="bg-card border border-border rounded-xl flex flex-col p-2 gap-1 focus-within:border-foreground/15 transition-colors">
                         <textarea
                             ref={textareaRef}
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
                             onKeyDown={handleKeyDown}
                             disabled={isGenerating}
-                            placeholder="Describe what you want to see..."
-                            className="flex-1 bg-transparent border-none text-white placeholder:text-white/40 px-2 py-4 focus:outline-none focus:ring-0 disabled:opacity-50 text-[15px] leading-relaxed resize-none overflow-y-auto"
+                            placeholder="Describe what you want to generate..."
+                            className="align-middle w-full bg-transparent text-foreground placeholder:text-foreground/25 px-2 pt-1.5 pb-1.5 focus:outline-none resize-none text-sm leading-relaxed disabled:opacity-50"
                             rows={1}
                         />
-
-                        <div className="p-1.5 shrink-0 flex items-center gap-1.5">
-                            <div className="relative flex items-center text-white/50 hover:text-white/90 transition-colors bg-white/5 hover:bg-white/10 rounded-xl px-3 py-2 cursor-pointer border border-white/5 group">
-                                <select
-                                    value={aspectRatio}
-                                    onChange={(e) => setAspectRatio(e.target.value as "square" | "landscape" | "vertical")}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                    title="Aspect Ratio"
-                                >
-                                    <option value="square" className="bg-sidebar text-sidebar-foreground">Square</option>
-                                    <option value="landscape" className="bg-sidebar text-sidebar-foreground">Landscape</option>
-                                    <option value="vertical" className="bg-sidebar text-sidebar-foreground">Vertical</option>
-                                </select>
-                                <div className="flex items-center gap-1.5 pointer-events-none relative z-0">
-                                    {aspectRatio === "square" && <Square className="w-4 h-4 shrink-0" strokeWidth={2} />}
-                                    {aspectRatio === "landscape" && <RectangleHorizontal className="w-4 h-4 shrink-0" strokeWidth={2} />}
-                                    {aspectRatio === "vertical" && <RectangleVertical className="w-4 h-4 shrink-0" strokeWidth={2} />}
-                                    <ChevronDown className="w-3.5 h-3.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
+                        <div className="flex items-center justify-between px-1">
+                            <div className="flex items-center gap-1">
+                                <div className="relative flex items-center text-foreground/35 hover:text-foreground/60 transition-colors rounded-lg px-2 py-1 cursor-pointer hover:bg-accent">
+                                    <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as "square" | "landscape" | "vertical")}
+                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+                                        <option value="square">Square</option>
+                                        <option value="landscape">Landscape</option>
+                                        <option value="vertical">Vertical</option>
+                                    </select>
+                                    <div className="flex items-center gap-1.5 pointer-events-none text-xs">
+                                        {aspectRatio === "square" && <><Square size={12} strokeWidth={2} /><span>Square</span></>}
+                                        {aspectRatio === "landscape" && <><RectangleHorizontal size={12} strokeWidth={2} /><span>Landscape</span></>}
+                                        {aspectRatio === "vertical" && <><RectangleVertical size={12} strokeWidth={2} /><span>Vertical</span></>}
+                                        <ChevronDown size={10} className="opacity-40" />
+                                    </div>
                                 </div>
+
+                                <button type="button" onClick={() => setShowAdvanced(!showAdvanced)}
+                                    className={cn("flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors",
+                                        showAdvanced ? "text-foreground/70 bg-accent" : "text-foreground/35 hover:text-foreground/60 hover:bg-accent")}>
+                                    <Layers size={12} strokeWidth={1.8} /> Advanced
+                                </button>
                             </div>
 
-                            <button
-                                type="submit"
-                                disabled={!prompt.trim() || isGenerating}
-                                className={cn(
-                                    "p-3 rounded-xl flex items-center justify-center transition-all duration-200",
-                                    prompt.trim() && !isGenerating
-                                        ? "bg-white text-black hover:bg-neutral-200 shadow-sm"
-                                        : "bg-white/[0.05] text-white/20 cursor-not-allowed"
-                                )}
-                            >
-                                <ArrowUp size={18} strokeWidth={2.5} />
+                            <button type="submit" disabled={!prompt.trim() || isGenerating}
+                                className={cn("p-1.5 rounded-lg transition-colors",
+                                    prompt.trim() && !isGenerating ? "bg-foreground text-background hover:bg-foreground/90" : "bg-foreground/6 text-foreground/20 cursor-not-allowed")}>
+                                <ArrowUp size={14} strokeWidth={2.5} />
                             </button>
                         </div>
                     </form>
@@ -730,12 +595,7 @@ export default function ImageArea({ user }: { user: User | null }) {
                 src={viewerImage?.src || null}
                 prompt={viewerImage?.prompt}
                 onClose={() => setViewerOpen(false)}
-                onRegenerate={() => {
-                    if (viewerImage?.prompt) {
-                        setPrompt(viewerImage.prompt);
-                        handleGenerate();
-                    }
-                }}
+                onRegenerate={() => { if (viewerImage?.prompt) { setPrompt(viewerImage.prompt); handleGenerate(); } }}
             />
         </div>
     );
