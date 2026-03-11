@@ -11,6 +11,8 @@ from app import dependencies as deps
 from app.config import settings
 from app.models import HealthResponse
 from app.routers import documents
+from app.routers import capabilities as capabilities_router
+from app.capabilities.registry import registry
 from app.services.chunker import ChunkingService
 from app.services.embedder import EmbeddingService
 from app.services.ocr import OCRService
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI):
         vectorstore=deps.vectorstore_service,
         chunker=deps.chunking_service,
     )
+    registry.autodiscover()
     logger.info("Services ready.")
     yield
     # Shutdown
@@ -65,6 +68,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(documents.router)
+app.include_router(capabilities_router.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

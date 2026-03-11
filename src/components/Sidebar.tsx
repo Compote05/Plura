@@ -145,7 +145,7 @@ export default function Sidebar() {
     return (
         <aside className={cn(
             "h-full flex flex-col bg-sidebar border-r border-sidebar-border text-sidebar-foreground shrink-0 transition-all duration-300 ease-in-out relative z-20",
-            isCollapsed ? "w-[56px]" : "w-[240px]"
+            isCollapsed ? "w-[56px]" : "w-[300px]"
         )}>
 
             {/* Header */}

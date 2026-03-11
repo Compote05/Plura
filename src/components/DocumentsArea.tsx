@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { FileText, Trash2, HardDrive, Sparkles, Folder, Mic, ImageIcon, Brain, Search, Play } from "lucide-react";
+import { FileText, Trash2, HardDrive, Sparkles, Folder, Mic, ImageIcon, Brain, Search, Play, TrendingUp, Newspaper, ToggleLeft, ToggleRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ImageViewer from "./ImageViewer";
 import AudioViewer from "./AudioViewer";
@@ -31,14 +31,349 @@ interface DocumentsAreaProps {
     user: User | null;
 }
 
-type MainSection = "explore" | "mydata";
+type MainSection = "explore" | "capabilities" | "mydata";
+
+interface Capability {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+    color: string;
+    tools: { name: string; description: string }[];
+    enabled: boolean;
+}
 type DataTab = "generated" | "documents";
+
+const EXPLORE_MODES = [
+    {
+        id: "imgen",
+        name: "Image Generation",
+        description: "Full control over generation parameters — samplers, CFG scale, seeds, and custom workflows.",
+        icon: <ImageIcon size={18} strokeWidth={1.5} />,
+        iconBg: "bg-fuchsia-500/10 text-fuchsia-400",
+        href: "#",
+        available: true,
+        tag: null,
+    },
+    {
+        id: "tts",
+        name: "Text-to-Speech",
+        description: "Convert text to natural-sounding voice across multiple languages and styles.",
+        icon: <Mic size={18} strokeWidth={1.5} />,
+        iconBg: "bg-emerald-500/10 text-emerald-400",
+        href: "/tts",
+        available: true,
+        tag: null,
+    },
+    {
+        id: "learning",
+        name: "Learning",
+        description: "Upload documents or courses to generate tailored revision sheets and audio lessons.",
+        icon: <Brain size={18} strokeWidth={1.5} />,
+        iconBg: "bg-amber-500/10 text-amber-400",
+        href: "#",
+        available: false,
+        tag: "Soon",
+    },
+    {
+        id: "search",
+        name: "Deep Search",
+        description: "Advanced research mode using verified sources to retrieve accurate, grounded answers.",
+        icon: <Search size={18} strokeWidth={1.5} />,
+        iconBg: "bg-rose-500/10 text-rose-400",
+        href: "#",
+        available: false,
+        tag: "Soon",
+    },
+];
+
+type ExploreFilter = "all" | "available" | "coming";
+
+function ExploreModes() {
+    const [filter, setFilter] = useState<ExploreFilter>("all");
+
+    const filters: { id: ExploreFilter; label: string; count: number }[] = [
+        { id: "all", label: "All", count: EXPLORE_MODES.length },
+        { id: "available", label: "Available", count: EXPLORE_MODES.filter(m => m.available).length },
+        { id: "coming", label: "Coming Soon", count: EXPLORE_MODES.filter(m => !m.available).length },
+    ];
+
+    const filtered = filter === "all" ? EXPLORE_MODES
+        : filter === "available" ? EXPLORE_MODES.filter(m => m.available)
+        : EXPLORE_MODES.filter(m => !m.available);
+
+    return (
+        <div className="flex gap-8 flex-1 pb-12 min-h-0">
+            {/* Sidebar */}
+            <div className="w-44 shrink-0 flex flex-col gap-1 pt-1">
+                <p className="text-[10px] font-medium text-white/25 uppercase tracking-[0.15em] px-3 mb-3">
+                    Filter
+                </p>
+                {filters.map((f) => (
+                    <button
+                        key={f.id}
+                        onClick={() => setFilter(f.id)}
+                        className={cn(
+                            "flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-medium transition-all text-left",
+                            filter === f.id
+                                ? "bg-white/[0.07] text-white"
+                                : "text-white/40 hover:text-white/70 hover:bg-white/[0.03]"
+                        )}
+                    >
+                        <span>{f.label}</span>
+                        <span className={cn("text-[11px] tabular-nums", filter === f.id ? "text-white/50" : "text-white/20")}>
+                            {f.count}
+                        </span>
+                    </button>
+                ))}
+
+                <div className="mt-auto pt-6 px-3">
+                    <div className="text-[10px] text-white/20 uppercase tracking-widest mb-1">Available</div>
+                    <div className="text-[22px] font-semibold text-white/80 leading-none">
+                        {EXPLORE_MODES.filter(m => m.available).length}
+                    </div>
+                    <div className="text-[11px] text-white/25 mt-0.5">of {EXPLORE_MODES.length} modes</div>
+                </div>
+            </div>
+
+            {/* Cards */}
+            <div className="flex-1 min-w-0">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {filtered.map((mode) => {
+                        const Wrapper = mode.available && mode.href !== "#" ? Link : "a";
+                        return (
+                            <Wrapper
+                                key={mode.id}
+                                href={mode.href}
+                                className={cn(
+                                    "group flex flex-col p-5 rounded-2xl border transition-all duration-200",
+                                    mode.available
+                                        ? "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10 cursor-pointer"
+                                        : "bg-white/[0.01] border-white/[0.04] cursor-default opacity-60"
+                                )}
+                            >
+                                <div className="flex items-start justify-between mb-4">
+                                    <div className={cn("w-10 h-10 flex items-center justify-center rounded-xl transition-colors", mode.iconBg)}>
+                                        {mode.icon}
+                                    </div>
+                                    {mode.tag && (
+                                        <span className="text-[10px] font-medium text-white/25 uppercase tracking-widest px-2.5 py-1 border border-white/[0.06] rounded-full">
+                                            {mode.tag}
+                                        </span>
+                                    )}
+                                    {mode.available && (
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                            <span className="text-[11px] text-white/30">Active</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <h4 className="text-[14px] font-semibold text-white/90 mb-1.5 tracking-tight group-hover:text-white transition-colors">
+                                    {mode.name}
+                                </h4>
+                                <p className="text-[12.5px] text-white/40 leading-relaxed">
+                                    {mode.description}
+                                </p>
+                            </Wrapper>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+    finance: "Finance",
+    news: "News",
+    weather: "Weather",
+    search: "Search",
+};
+
+function CapabilitiesSection({
+    user,
+    capabilities,
+    togglingCap,
+    onToggle,
+    getIcon,
+}: {
+    user: User | null;
+    capabilities: Capability[];
+    togglingCap: string | null;
+    onToggle: (id: string, enabled: boolean) => void;
+    getIcon: (icon: string, color: string) => React.ReactNode;
+}) {
+    const [activeFilter, setActiveFilter] = useState<string>("all");
+
+    const categories = ["all", ...Array.from(new Set(capabilities.map((c) => c.id)))];
+
+    const filtered = activeFilter === "all"
+        ? capabilities
+        : capabilities.filter((c) => c.id === activeFilter);
+
+    const activeCount = capabilities.filter((c) => c.enabled).length;
+
+    const colorDot: Record<string, string> = {
+        emerald: "bg-emerald-400",
+        blue: "bg-blue-400",
+        amber: "bg-amber-400",
+        rose: "bg-rose-400",
+        purple: "bg-purple-400",
+    };
+
+    if (!user) {
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl">
+                <Zap className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
+                <h3 className="text-lg font-medium text-white mb-2">Login Required</h3>
+                <p className="text-white/40 text-[15px] max-w-sm">Sign in to manage capabilities.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex gap-8 flex-1 pb-12 min-h-0">
+            {/* Left sidebar */}
+            <div className="w-44 shrink-0 flex flex-col gap-1 pt-1">
+                <p className="text-[10px] font-medium text-white/25 uppercase tracking-[0.15em] px-3 mb-3">
+                    Categories
+                </p>
+                {categories.map((cat) => {
+                    const cap = capabilities.find((c) => c.id === cat);
+                    const isActive = activeFilter === cat;
+                    return (
+                        <button
+                            key={cat}
+                            onClick={() => setActiveFilter(cat)}
+                            className={cn(
+                                "flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-medium transition-all text-left",
+                                isActive
+                                    ? "bg-white/[0.07] text-white"
+                                    : "text-white/40 hover:text-white/70 hover:bg-white/[0.03]"
+                            )}
+                        >
+                            <div className="flex items-center gap-2.5">
+                                {cat === "all" ? (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-white/30" />
+                                ) : (
+                                    <div className={cn("w-1.5 h-1.5 rounded-full", colorDot[cap?.color || ""] || "bg-white/30")} />
+                                )}
+                                {cat === "all" ? "All" : (CATEGORY_LABELS[cat] || cat)}
+                            </div>
+                            <span className={cn(
+                                "text-[11px] tabular-nums",
+                                isActive ? "text-white/50" : "text-white/20"
+                            )}>
+                                {cat === "all" ? capabilities.length : 1}
+                            </span>
+                        </button>
+                    );
+                })}
+
+                {/* Active count */}
+                <div className="mt-auto pt-6 px-3">
+                    <div className="text-[10px] text-white/20 uppercase tracking-widest mb-1">Active</div>
+                    <div className="text-[22px] font-semibold text-white/80 leading-none">{activeCount}</div>
+                    <div className="text-[11px] text-white/25 mt-0.5">of {capabilities.length} enabled</div>
+                </div>
+            </div>
+
+            {/* Main content */}
+            <div className="flex-1 min-w-0">
+                {capabilities.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl">
+                        <Zap className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
+                        <p className="text-white/40 text-[15px]">No capabilities found. Make sure the api-server is running.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <AnimatePresence mode="popLayout">
+                            {filtered.map((cap) => (
+                                <motion.div
+                                    key={cap.id}
+                                    layout
+                                    initial={false}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0, scale: 0.97 }}
+                                    transition={{ duration: 0.15 }}
+                                    className={cn(
+                                        "relative flex flex-col p-5 rounded-2xl border transition-all duration-300",
+                                        cap.enabled
+                                            ? "bg-white/[0.04] border-white/10"
+                                            : "bg-white/[0.015] border-white/[0.06]"
+                                    )}
+                                >
+                                    {/* Top row */}
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            {getIcon(cap.icon, cap.color)}
+                                            <div>
+                                                <h4 className="text-[14px] font-semibold text-white/90 leading-tight">
+                                                    {cap.name}
+                                                </h4>
+                                                <div className="flex items-center gap-1.5 mt-1">
+                                                    <div className={cn(
+                                                        "w-1.5 h-1.5 rounded-full transition-all",
+                                                        cap.enabled ? "bg-emerald-400" : "bg-white/15"
+                                                    )} />
+                                                    <span className="text-[11px] text-white/30">
+                                                        {cap.enabled ? "Active" : "Inactive"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Toggle */}
+                                        <button
+                                            onClick={() => onToggle(cap.id, cap.enabled)}
+                                            disabled={togglingCap === cap.id}
+                                            className={cn(
+                                                "relative w-10 h-5.5 rounded-full transition-all duration-300 disabled:opacity-40 shrink-0 mt-0.5",
+                                                cap.enabled ? "bg-emerald-500/80" : "bg-white/10"
+                                            )}
+                                            style={{ height: 22, width: 40 }}
+                                        >
+                                            <motion.div
+                                                animate={{ x: cap.enabled ? 20 : 2 }}
+                                                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                                                className="absolute top-[3px] w-4 h-4 bg-white rounded-full shadow-sm"
+                                            />
+                                        </button>
+                                    </div>
+
+                                    {/* Description */}
+                                    <p className="text-[12.5px] text-white/40 leading-relaxed mb-4 flex-1">
+                                        {cap.description}
+                                    </p>
+
+                                    {/* Tools */}
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {cap.tools.map((tool) => (
+                                            <span
+                                                key={tool.name}
+                                                className="text-[10px] px-2 py-1 bg-white/[0.04] border border-white/[0.06] text-white/30 rounded-lg font-mono"
+                                            >
+                                                {tool.name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </motion.div>
+                            ))}
+                        </AnimatePresence>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
 
 export default function DocumentsArea({ user }: DocumentsAreaProps) {
     const [generatedItems, setGeneratedItems] = useState<GeneratedItem[]>([]);
     const [documents, setDocuments] = useState<DatabaseDocument[]>([]);
     const [activeSection, setActiveSection] = useState<MainSection>("explore");
     const [activeDataTab, setActiveDataTab] = useState<DataTab>("generated");
+    const [capabilities, setCapabilities] = useState<Capability[]>([]);
+    const [togglingCap, setTogglingCap] = useState<string | null>(null);
     const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
     const resolvingUrls = useRef<Set<string>>(new Set());
 
@@ -76,8 +411,20 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
             if (data) setDocuments(data);
         };
 
+        const fetchCapabilities = async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) return;
+                const res = await fetch('/api/capabilities', {
+                    headers: { Authorization: `Bearer ${session.access_token}` }
+                });
+                if (res.ok) setCapabilities(await res.json());
+            } catch { }
+        };
+
         fetchGenerated();
         fetchDocuments();
+        fetchCapabilities();
     }, [user]);
 
     const handleDeleteGenerated = async (item: GeneratedItem) => {
@@ -133,6 +480,46 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
         await supabase.storage.from("library").remove([doc.storage_path]);
         await supabase.from("documents").delete().eq("id", doc.id);
         setDocuments(prev => prev.filter(d => d.id !== doc.id));
+    };
+
+    const handleToggleCapability = async (capId: string, currentEnabled: boolean) => {
+        if (!user || togglingCap) return;
+        setTogglingCap(capId);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
+            await fetch('/api/capabilities', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ capability_id: capId, enabled: !currentEnabled }),
+            });
+            setCapabilities((prev) =>
+                prev.map((c) => (c.id === capId ? { ...c, enabled: !currentEnabled } : c))
+            );
+        } finally {
+            setTogglingCap(null);
+        }
+    };
+
+    const getCapabilityIcon = (iconName: string, color: string) => {
+        const colorMap: Record<string, string> = {
+            emerald: "text-emerald-400 bg-emerald-500/10",
+            blue: "text-blue-400 bg-blue-500/10",
+            amber: "text-amber-400 bg-amber-500/10",
+        };
+        const cls = colorMap[color] || "text-white/50 bg-white/5";
+        const iconMap: Record<string, React.ReactNode> = {
+            TrendingUp: <TrendingUp size={18} strokeWidth={1.5} />,
+            Newspaper: <Newspaper size={18} strokeWidth={1.5} />,
+        };
+        return (
+            <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${cls}`}>
+                {iconMap[iconName] ?? <Zap size={18} strokeWidth={1.5} />}
+            </div>
+        );
     };
 
     const formatBytes = (bytes: number) => {
@@ -214,6 +601,15 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                             Explore Modes
                         </button>
                         <button
+                            onClick={() => setActiveSection("capabilities")}
+                            className={cn(
+                                "px-6 py-2 rounded-lg text-sm font-medium transition-all",
+                                activeSection === "capabilities" ? "bg-white/10 text-white shadow-sm" : "text-white/40 hover:text-white/70"
+                            )}
+                        >
+                            Capabilities
+                        </button>
+                        <button
                             onClick={() => setActiveSection("mydata")}
                             className={cn(
                                 "px-6 py-2 rounded-lg text-sm font-medium transition-all",
@@ -226,71 +622,15 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
                 </div>
 
                 {activeSection === "explore" ? (
-                    <div className="flex flex-col flex-1 pb-12 w-full mt-2">
-                        <div className="mb-8 px-2 lg:px-0">
-                            <h3 className="text-[13px] font-medium text-white/40 uppercase tracking-widest">Available Modes</h3>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            <a href="#" className="group relative bg-white/[0.02] hover:bg-white/[0.04] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-white/5 hover:border-white/10 flex flex-col min-h-[180px]">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-fuchsia-500/10 text-fuchsia-400 group-hover:bg-fuchsia-500/20 group-hover:text-fuchsia-300 transition-colors">
-                                        <ImageIcon size={18} strokeWidth={1.5} />
-                                    </div>
-                                </div>
-                                <div className="mt-auto">
-                                    <h4 className="text-[16px] font-medium text-white/90 mb-1.5 tracking-tight group-hover:text-white transition-colors">Image Generation Advanced</h4>
-                                    <p className="text-[13px] text-white/40 leading-relaxed group-hover:text-white/50 transition-colors">
-                                        Extensive control over model parameters and a customized generation interface with advanced options.
-                                    </p>
-                                </div>
-                            </a>
-
-                            <Link href="/tts" className="group relative bg-white/[0.02] hover:bg-white/[0.04] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-white/5 hover:border-white/10 flex flex-col min-h-[180px]">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 group-hover:text-emerald-300 transition-colors">
-                                        <Mic size={18} strokeWidth={1.5} />
-                                    </div>
-                                </div>
-                                <div className="mt-auto">
-                                    <h4 className="text-[16px] font-medium text-white/90 mb-1.5 tracking-tight group-hover:text-white transition-colors">Text-to-Speech</h4>
-                                    <p className="text-[13px] text-white/40 leading-relaxed group-hover:text-white/50 transition-colors">
-                                        Convert text to natural voice spanning multiple languages and cloned styles.
-                                    </p>
-                                </div>
-                            </Link>
-
-                            <a href="#" className="group relative bg-transparent hover:bg-white/[0.02] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-transparent hover:border-white/10 flex flex-col min-h-[180px]">
-                                <div className="flex justify-between items-start mb-6 opacity-70 group-hover:opacity-100 transition-opacity">
-                                    <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 group-hover:text-amber-300 transition-colors">
-                                        <Brain size={18} strokeWidth={1.5} />
-                                    </div>
-                                    <span className="text-[10px] font-medium text-white/30 uppercase tracking-widest px-2.5 py-1 bg-transparent border border-white/5 rounded-full">Coming Soon</span>
-                                </div>
-                                <div className="mt-auto opacity-50 group-hover:opacity-80 transition-opacity">
-                                    <h4 className="text-[16px] font-medium text-white/70 mb-1.5 tracking-tight">Learning</h4>
-                                    <p className="text-[13px] text-white/40 leading-relaxed">
-                                        Upload documents or courses to automatically generate tailored revision sheets and audio lessons.
-                                    </p>
-                                </div>
-                            </a>
-
-                            <a href="#" className="group relative bg-transparent hover:bg-white/[0.02] p-6 rounded-[1.25rem] transition-all duration-300 ease-out border border-transparent hover:border-white/10 flex flex-col min-h-[180px]">
-                                <div className="flex justify-between items-start mb-6 opacity-70 group-hover:opacity-100 transition-opacity">
-                                    <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 group-hover:bg-rose-500/20 group-hover:text-rose-300 transition-colors">
-                                        <Search size={18} strokeWidth={1.5} />
-                                    </div>
-                                    <span className="text-[10px] font-medium text-white/30 uppercase tracking-widest px-2.5 py-1 bg-transparent border border-white/5 rounded-full">Coming Soon</span>
-                                </div>
-                                <div className="mt-auto opacity-50 group-hover:opacity-80 transition-opacity">
-                                    <h4 className="text-[16px] font-medium text-white/70 mb-1.5 tracking-tight">Deep Search</h4>
-                                    <p className="text-[13px] text-white/40 leading-relaxed">
-                                        Advanced research mode utilizing Wikipedia data to retrieve accurate facts and strictly limit hallucinations.
-                                    </p>
-                                </div>
-                            </a>
-                        </div>
-                    </div>
+                    <ExploreModes />
+                ) : activeSection === "capabilities" ? (
+                    <CapabilitiesSection
+                        user={user}
+                        capabilities={capabilities}
+                        togglingCap={togglingCap}
+                        onToggle={handleToggleCapability}
+                        getIcon={getCapabilityIcon}
+                    />
                 ) : (
                     <div className="flex flex-col flex-1">
                         <div className="flex items-center gap-6 border-b border-white/5 pb-0 mb-8 shrink-0">
