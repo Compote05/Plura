@@ -21,15 +21,10 @@ class FinanceCapability(CapabilityBase):
             ToolDefinition(
                 name="get_asset_price",
                 description=(
-                    "Use this when the user asks about the price, value, or chart of a SPECIFIC asset. "
-                    "Convert asset names to Yahoo Finance ticker symbols using this mapping: "
-                    "Bitcoin/BTC→BTC-USD, Ethereum/ETH→ETH-USD, Solana→SOL-USD, "
-                    "Apple→AAPL, Tesla→TSLA, Microsoft→MSFT, Google→GOOGL, Amazon→AMZN, Nvidia→NVDA, "
-                    "S&P500/SP500→^GSPC, NASDAQ→^IXIC, Dow Jones→^DJI, "
-                    "Gold/Or→GC=F, Silver/Argent→SI=F, "
-                    "Oil/Pétrole/Crude/WTI/Brent→CL=F, "
-                    "Natural Gas→NG=F, Copper→HG=F, Wheat/Blé→ZW=F. "
-                    "Always use the exact ticker symbol."
+                    "Use this when the user asks about the price, value, or chart of a SPECIFIC asset "
+                    "(stock, crypto, commodity, index). Pass the asset name or ticker symbol as-is — "
+                    "the tool will automatically resolve it. Examples: 'bitcoin', 'apple', 'pétrole', "
+                    "'crude oil', 'S&P 500', 'AAPL', 'BTC-USD'."
                 ),
                 parameters={
                     "type": "object",
@@ -60,12 +55,32 @@ class FinanceCapability(CapabilityBase):
             return await self._get_market_overview()
         return ToolResult(text="Unknown tool.", result_type="text")
 
+    def _resolve_symbol(self, query: str) -> str:
+        """Try to resolve a name/query to a valid ticker using yfinance search."""
+        try:
+            results = yf.Search(query, max_results=1).quotes
+            if results:
+                return results[0].get("symbol", query)
+        except Exception:
+            pass
+        return query
+
     async def _get_asset_price(self, symbol: str) -> ToolResult:
         try:
             ticker = yf.Ticker(symbol)
             hist = ticker.history(period="30d", auto_adjust=True)
+
+            # If no data, try resolving via search
             if hist.empty:
-                return ToolResult(text=f"No data found for symbol '{symbol}'.", result_type="text")
+                resolved = self._resolve_symbol(symbol)
+                if resolved != symbol:
+                    logger.info("Resolved '%s' → '%s'", symbol, resolved)
+                    symbol = resolved
+                    ticker = yf.Ticker(symbol)
+                    hist = ticker.history(period="30d", auto_adjust=True)
+
+            if hist.empty:
+                return ToolResult(text=f"No data found for '{symbol}'.", result_type="text")
 
             info = ticker.fast_info
             current_price = float(getattr(info, "last_price", None) or hist["Close"].iloc[-1])

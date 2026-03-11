@@ -8,7 +8,11 @@ export async function GET(req: Request) {
     const user = await verifyAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const token = req.headers.get('Authorization')?.split(' ')[1];
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    if (!RAG_API_URL) return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
 
     try {
         const pyRes = await fetch(`${RAG_API_URL}/v1/capabilities`, {
@@ -42,9 +46,28 @@ export async function POST(req: Request) {
     const user = await verifyAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    if (!RAG_API_URL) return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
+
     const { capability_id, enabled } = await req.json();
-    if (!capability_id || typeof enabled !== 'boolean') {
-        return NextResponse.json({ error: 'Missing capability_id or enabled' }, { status: 400 });
+    if (!capability_id || typeof capability_id !== 'string' || typeof enabled !== 'boolean') {
+        return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    }
+
+    // Validate capability_id exists in the registry
+    const pyRes = await fetch(`${RAG_API_URL}/v1/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => null);
+
+    if (!pyRes?.ok) return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
+
+    const knownCaps: { id: string }[] = await pyRes.json();
+    const validIds = new Set(knownCaps.map((c) => c.id));
+    if (!validIds.has(capability_id)) {
+        return NextResponse.json({ error: 'Unknown capability' }, { status: 400 });
     }
 
     const { error } = await supabaseAdmin
@@ -54,6 +77,6 @@ export async function POST(req: Request) {
             { onConflict: 'user_id,capability_id' }
         );
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: 'Database error' }, { status: 500 });
     return NextResponse.json({ ok: true });
 }

@@ -58,11 +58,20 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const OLLAMA_URL = await getOllamaUrl();
-    const token = req.headers.get('Authorization')?.split(' ')[1] || '';
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+    if (!RAG_API_URL && activeCapabilityIds?.length > 0) {
+        // Capabilities requested but service not configured — skip silently
+    }
 
     try {
         const body = await req.json();
         const { model, messages, stream, think, attachedDocIds, activeCapabilityIds } = body;
+
+        if (!RAG_API_URL && activeCapabilityIds?.length > 0) {
+            console.warn('[Capabilities] RAG_API_URL not set, skipping capabilities');
+        }
 
         // --- RAG Subsystem ---
         if (attachedDocIds?.length > 0 && messages?.length > 0) {

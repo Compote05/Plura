@@ -67,7 +67,8 @@ class NewsCapability(CapabilityBase):
 
                 source = re.sub(r"<!\[CDATA\[|\]\]>", "", source_m.group(1)).strip() if source_m else ""
                 pub_date = pub_m.group(1).strip() if pub_m else ""
-                link = link_m.group(1).strip() if link_m else ""
+                raw_link = link_m.group(1).strip() if link_m else ""
+                link = raw_link if raw_link.startswith("https://") else ""
 
                 articles.append({"title": title, "source": source, "published": pub_date, "link": link})
 
