@@ -14,6 +14,7 @@ import { Copy, Check, ChevronDown, BrainCircuit, ArrowDown, FileText } from "luc
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ImageViewer from "./ImageViewer";
+import ToolResultBlock, { type ToolResult } from "./ToolResultBlock";
 
 import { cn } from "@/lib/utils";
 import { useAppContext } from "@/context/AppContext";
@@ -106,6 +107,7 @@ interface Message {
     images?: string[];
     thinking?: string;
     attachedDocs?: DatabaseDocument[];
+    toolResults?: ToolResult[];
 }
 
 interface DatabaseDocument {
@@ -130,6 +132,28 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
     const isInitial = messages.length === 0;
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    const [activeCapabilityIds, setActiveCapabilityIds] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (!user) return;
+        const loadCapabilities = async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) return;
+                const res = await fetch('/api/capabilities', {
+                    headers: { Authorization: `Bearer ${session.access_token}` }
+                });
+                if (res.ok) {
+                    const caps = await res.json();
+                    setActiveCapabilityIds(
+                        caps.filter((c: { enabled: boolean }) => c.enabled).map((c: { id: string }) => c.id)
+                    );
+                }
+            } catch { }
+        };
+        loadCapabilities();
+    }, [user]);
 
     const [viewerOpen, setViewerOpen] = useState(false);
     const [viewerImage, setViewerImage] = useState<{ src: string, prompt: string } | null>(null);
@@ -311,6 +335,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
         setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
         setIsStreaming(true);
         let responseText = "";
+        const pendingToolResults: ToolResult[] = [];
 
         try {
             // Setup AbortController for stopping generation
@@ -345,7 +370,8 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     messages: ollamaMessages,
                     stream: true,
                     think: think,
-                    attachedDocIds: allAttachedDocIds
+                    attachedDocIds: allAttachedDocIds,
+                    activeCapabilityIds: activeCapabilityIds,
                 }),
             });
 
@@ -368,6 +394,24 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     for (const line of lines) {
                         try {
                             const parsed = JSON.parse(line);
+
+                            if (parsed.type === 'tool_result') {
+                                const tr: ToolResult = {
+                                    tool_name: parsed.tool_name,
+                                    result_type: parsed.result_type,
+                                    data: parsed.data,
+                                };
+                                pendingToolResults.push(tr);
+                                setMessages((prev) =>
+                                    prev.map((msg) =>
+                                        msg.id === assistantId
+                                            ? { ...msg, toolResults: [...pendingToolResults] }
+                                            : msg
+                                    )
+                                );
+                                continue;
+                            }
+
                             let requiresUpdate = false;
 
                             if (parsed.message?.thinking) {
@@ -395,7 +439,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
 
             // Stream complete, save final message to DB
             if (currentThreadId && user) {
-                const finalAssistantMsg: Message = { id: assistantId, role: "assistant", content: responseText, thinking: thinkingText };
+                const finalAssistantMsg: Message = { id: assistantId, role: "assistant", content: responseText, thinking: thinkingText, toolResults: pendingToolResults.length > 0 ? pendingToolResults : undefined };
                 const finalMessages = [...newMessagesContext, finalAssistantMsg];
                 await supabase
                     .from('threads')
@@ -605,6 +649,13 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                             <div className="flex flex-col w-full">
                                                 {msg.thinking && (
                                                     <ThinkingBlock text={msg.thinking} isStreaming={isStreaming && idx === lastAssistantMessageIndex && !msg.content} />
+                                                )}
+                                                {msg.toolResults && msg.toolResults.length > 0 && (
+                                                    <div className="flex flex-col gap-2 mb-5">
+                                                        {msg.toolResults.map((tr, i) => (
+                                                            <ToolResultBlock key={i} result={tr} />
+                                                        ))}
+                                                    </div>
                                                 )}
                                                 <div className="prose prose-invert max-w-none w-full prose-p:leading-relaxed prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-none prose-pre:shadow-none">
                                                     <ReactMarkdown

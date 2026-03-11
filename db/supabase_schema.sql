@@ -151,6 +151,23 @@ CREATE TABLE public.audio (
 
 CREATE INDEX idx_audio_user_id ON public.audio(user_id);
 
+-- 7. User Capabilities Table
+-- Stores which AI tool capabilities are enabled per user.
+CREATE TABLE public.user_capabilities (
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()) NOT NULL,
+    PRIMARY KEY (user_id, capability_id)
+);
+
+ALTER TABLE public.user_capabilities ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage their own capabilities"
+ON public.user_capabilities FOR ALL
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
+
 -- 6. Setup the Unified Storage Bucket
 -- Creates a single PRIVATE bucket named 'library' for all user assets (audio, images, uploads)
 INSERT INTO storage.buckets (id, name, public) 
