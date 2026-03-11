@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Newspaper, ExternalLink } from "lucide-react";
+import { useState, useRef, useCallback } from "react";
 
 interface PricePoint {
     date: string;
@@ -41,9 +42,27 @@ export interface ToolResult {
     data: Record<string, unknown>;
 }
 
-// Smooth SVG chart with bezier curves and Y-axis labels
-function PriceChart({ history, isUp }: { history: PricePoint[]; isUp: boolean }) {
+interface HoverState {
+    index: number;
+    x: number;
+    y: number;
+}
+
+// Smooth SVG chart with bezier curves, hover crosshair and tooltip
+function PriceChart({
+    history,
+    isUp,
+    onHover,
+}: {
+    history: PricePoint[];
+    isUp: boolean;
+    onHover: (state: HoverState | null) => void;
+}) {
     if (!history || history.length < 2) return null;
+
+    const svgRef = useRef<SVGSVGElement>(null);
+    const [hoverX, setHoverX] = useState<number | null>(null);
+    const [hoverPt, setHoverPt] = useState<{ x: number; y: number } | null>(null);
 
     const values = history.map((p) => p.close);
     const min = Math.min(...values);
@@ -74,40 +93,89 @@ function PriceChart({ history, isUp }: { history: PricePoint[]; isUp: boolean })
     const color = isUp ? "#10b981" : "#f87171";
     const gradId = `cg-${isUp ? "up" : "dn"}`;
 
-    // Y-axis labels (3 levels)
     const yLabels = [
-        { value: max, y: PAD_Y },
-        { value: min + range / 2, y: H / 2 },
-        { value: min, y: H - PAD_Y },
+        { y: PAD_Y },
+        { y: H / 2 },
+        { y: H - PAD_Y },
     ];
 
+    const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+        const svg = svgRef.current;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const relX = (e.clientX - rect.left) / rect.width;
+        const svgX = relX * W;
+
+        // Find nearest data point
+        let nearest = 0;
+        let minDist = Infinity;
+        pts.forEach((p, i) => {
+            const d = Math.abs(p.x - svgX);
+            if (d < minDist) { minDist = d; nearest = i; }
+        });
+
+        setHoverX(pts[nearest].x);
+        setHoverPt({ x: pts[nearest].x, y: pts[nearest].y });
+        onHover({ index: nearest, x: pts[nearest].x, y: pts[nearest].y });
+    }, [pts, onHover]);
+
+    const handleMouseLeave = useCallback(() => {
+        setHoverX(null);
+        setHoverPt(null);
+        onHover(null);
+    }, [onHover]);
+
     return (
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 110 }} preserveAspectRatio="none">
+        <svg
+            ref={svgRef}
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full cursor-crosshair"
+            style={{ height: 120 }}
+            preserveAspectRatio="none"
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+        >
             <defs>
                 <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={color} stopOpacity="0.22" />
                     <stop offset="85%" stopColor={color} stopOpacity="0.02" />
                 </linearGradient>
             </defs>
-            {/* Y-axis grid lines */}
             {yLabels.map((l, i) => (
                 <line key={i} x1={0} y1={l.y} x2={W} y2={l.y} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
             ))}
             <path d={areaPath} fill={`url(#${gradId})`} />
             <path d={linePath} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
-            {/* Last price dot */}
-            <circle cx={pts[pts.length - 1].x} cy={pts[pts.length - 1].y} r="3" fill={color} />
+            {/* Last price dot (hidden when hovering) */}
+            {hoverPt === null && (
+                <circle cx={pts[pts.length - 1].x} cy={pts[pts.length - 1].y} r="3" fill={color} />
+            )}
+            {/* Crosshair */}
+            {hoverX !== null && (
+                <line x1={hoverX} y1={0} x2={hoverX} y2={H} stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="3 3" />
+            )}
+            {/* Hover dot */}
+            {hoverPt && (
+                <>
+                    <circle cx={hoverPt.x} cy={hoverPt.y} r="5" fill={color} fillOpacity="0.2" />
+                    <circle cx={hoverPt.x} cy={hoverPt.y} r="3" fill={color} />
+                </>
+            )}
         </svg>
     );
 }
 
 function ChartBlock({ data }: { data: ChartData }) {
+    const [hovered, setHovered] = useState<{ index: number } | null>(null);
     const isUp = data.change_pct >= 0;
-    const color = isUp ? "#10b981" : "#f87171";
     const textColor = isUp ? "text-emerald-400" : "text-red-400";
 
     const fmt = (p: number) =>
         p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: p > 100 ? 2 : 4 });
+
+    const hoveredPoint = hovered !== null ? data.history[hovered.index] : null;
+    const displayPrice = hoveredPoint ? hoveredPoint.close : data.price;
+    const displayDate = hoveredPoint ? hoveredPoint.date : null;
 
     const stats = [
         { label: "Prev Close", value: fmt(data.prev_close) },
@@ -132,17 +200,25 @@ function ChartBlock({ data }: { data: ChartData }) {
                 </div>
                 <div className="flex items-end gap-3">
                     <span className="text-[28px] font-semibold text-white tracking-tight leading-none">
-                        {data.currency} {fmt(data.price)}
+                        {data.currency} {fmt(displayPrice)}
                     </span>
-                    <span className={`text-[14px] font-semibold pb-0.5 ${textColor}`}>
-                        {isUp ? "+" : ""}{fmt(data.change_abs)} ({isUp ? "+" : ""}{data.change_pct.toFixed(2)}%)
-                    </span>
+                    {hoveredPoint ? (
+                        <span className="text-[13px] text-white/35 pb-0.5">{displayDate}</span>
+                    ) : (
+                        <span className={`text-[14px] font-semibold pb-0.5 ${textColor}`}>
+                            {isUp ? "+" : ""}{fmt(data.change_abs)} ({isUp ? "+" : ""}{data.change_pct.toFixed(2)}%)
+                        </span>
+                    )}
                 </div>
             </div>
 
             {/* Chart */}
             <div className="px-1 py-2">
-                <PriceChart history={data.history} isUp={isUp} />
+                <PriceChart
+                    history={data.history}
+                    isUp={isUp}
+                    onHover={(s) => setHovered(s ? { index: s.index } : null)}
+                />
             </div>
 
             {/* X-axis dates */}
