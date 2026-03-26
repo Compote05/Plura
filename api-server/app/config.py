@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     rate_limit_upload: int = 20
     rate_limit_window: int = 60  # seconds
 
-    # API
+# API
     api_title: str = "Document Embedding API"
     api_version: str = "1.0.0"
     max_upload_size_mb: int = 100

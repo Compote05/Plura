@@ -1,0 +1,40 @@
+{
+  "31": {
+    "inputs": {
+      "audioUI": "/api/view?filename=ComfyUI_temp_kpqql_00001_.flac&type=temp&subfolder=&rand=0.10983422846893953",
+      "audio": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "PreviewAudio",
+    "_meta": {
+      "title": "Preview Audio"
+    }
+  },
+  "39": {
+    "inputs": {
+      "text": "Bonjour, je suis un modèle de synthèse vocale local. Comment puis-je vous aider aujourd'hui ?",
+      "speaker": "Serena",
+      "model_choice": "0.6B",
+      "device": "cuda",
+      "precision": "bf16",
+      "language": "French",
+      "seed": 149996290830503,
+      "instruct": "",
+      "max_new_tokens": 2048,
+      "top_p": 0.8,
+      "top_k": 20,
+      "temperature": 1,
+      "repetition_penalty": 1.05,
+      "attention": "sage_attn",
+      "unload_model_after_generate": true,
+      "custom_model_path": "",
+      "custom_speaker_name": ""
+    },
+    "class_type": "FB_Qwen3TTSCustomVoice",
+    "_meta": {
+      "title": "🎵 Qwen3-TTS CustomVoice"
+    }
+  }
+}

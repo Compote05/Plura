@@ -1,0 +1,9 @@
+torch
+torchaudio
+transformers>=4.53.0
+accelerate
+sounddevice
+soundfile
+librosa
+numpy
+huggingface_hub

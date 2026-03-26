@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, Paperclip, ChevronDown, Sparkles, FileText, Brain } from "lucide-react";
+import { ArrowUp, Paperclip, ChevronDown, Sparkles, FileText, Brain, AudioLines } from "lucide-react";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -24,13 +24,14 @@ interface InputBarProps {
     user?: User | null;
     onSubmit: (text: string, model: string, attachedDocs: DatabaseDocument[], attachedImages: string[], think: boolean) => void;
     onStop?: () => void;
+    onCallOpen?: () => void;
     isInitial: boolean;
     isStreaming?: boolean;
 }
 
 // Removed static MODELS list as we will load dynamically
 
-export default function InputBar({ user, onSubmit, isInitial, isStreaming, onStop }: InputBarProps) {
+export default function InputBar({ user, onSubmit, isInitial, isStreaming, onStop, onCallOpen }: InputBarProps) {
     const [value, setValue] = useState("");
     const [model, setModel] = useState<string | null>(null);
     const [availableModels, setAvailableModels] = useState<{ id: string, name: string }[]>([]);
@@ -558,18 +559,27 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
                             >
                                 <div className="w-2.5 h-2.5 rounded-[2px] bg-background" />
                             </button>
-                        ) : (
+                        ) : value.trim() ? (
                             <button
                                 type="submit"
-                                disabled={!value.trim() || !model || attachments.some(a => a.isUploading)}
+                                disabled={!model || attachments.some(a => a.isUploading)}
                                 className={cn(
                                     "p-1.5 rounded-lg flex items-center justify-center transition-colors",
-                                    (value.trim() || attachments.filter(a => a.file.type.startsWith('image/')).length > 0) && model && !attachments.some(a => a.isUploading)
+                                    model && !attachments.some(a => a.isUploading)
                                         ? "bg-foreground text-background hover:bg-foreground/90"
                                         : "bg-foreground/6 text-foreground/20 cursor-not-allowed"
                                 )}
                             >
                                 <ArrowUp size={14} strokeWidth={2.5} />
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={onCallOpen}
+                                className="p-1.5 rounded-lg flex items-center justify-center bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                                title="Voice call"
+                            >
+                                <AudioLines size={14} strokeWidth={2} />
                             </button>
                         )}
                     </div>

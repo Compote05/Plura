@@ -10,6 +10,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css"; // Math styling
 import InputBar from "./InputBar";
+import CallArea from "./CallArea";
 import { Copy, Check, ChevronDown, BrainCircuit, ArrowDown, FileText } from "lucide-react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -129,6 +130,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
     const { lastUsedMode, setLastUsedMode } = useAppContext();
     const [messages, setMessages] = useState<Message[]>([]);
     const [isStreaming, setIsStreaming] = useState(false);
+    const [isCallOpen, setIsCallOpen] = useState(false);
     const isInitial = messages.length === 0;
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
@@ -414,7 +416,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
 
                             let requiresUpdate = false;
 
-                            if (parsed.message?.thinking) {
+                            if (parsed.message?.thinking && think) {
                                 thinkingText += parsed.message.thinking;
                                 requiresUpdate = true;
                             }
@@ -781,11 +783,13 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                 isInitial={isInitial}
                                 isStreaming={isStreaming}
                                 onStop={handleStop}
+                                onCallOpen={() => setIsCallOpen(true)}
                             />
                         </div>
                     </div>
                 </motion.div>
             </div>
+            <CallArea isOpen={isCallOpen} onClose={() => setIsCallOpen(false)} user={user} />
             <ImageViewer
                 isOpen={viewerOpen}
                 src={viewerImage?.src || null}

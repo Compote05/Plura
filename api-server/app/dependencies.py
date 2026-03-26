@@ -5,6 +5,7 @@ from app.services.embedder import EmbeddingService
 from app.services.ocr import OCRService
 from app.services.pipeline import DocumentPipeline
 from app.services.vectorstore import VectorStoreService
+from app.services.stt_service import STTService
 
 # Singleton instances — initialized in lifespan
 ocr_service: OCRService | None = None
@@ -12,6 +13,7 @@ embedding_service: EmbeddingService | None = None
 vectorstore_service: VectorStoreService | None = None
 chunking_service: ChunkingService | None = None
 document_pipeline: DocumentPipeline | None = None
+stt_service: STTService | None = None
 
 
 def get_vectorstore() -> VectorStoreService:

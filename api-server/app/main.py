@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,7 @@ from app.config import settings
 from app.models import HealthResponse
 from app.routers import documents
 from app.routers import capabilities as capabilities_router
+from app.routers import stt as stt_router
 from app.capabilities.registry import registry
 from app.services.chunker import ChunkingService
 from app.services.embedder import EmbeddingService
@@ -30,6 +32,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing services...")
+    deps.stt_service = deps.STTService()
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, deps.stt_service.load)
+    except Exception as e:
+        logger.warning(f"STT service unavailable: {e}")
     deps.ocr_service = OCRService()
     deps.embedding_service = EmbeddingService()
     deps.vectorstore_service = VectorStoreService(deps.embedding_service)
@@ -69,6 +76,7 @@ app.add_middleware(
 # Routers
 app.include_router(documents.router)
 app.include_router(capabilities_router.router)
+app.include_router(stt_router.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

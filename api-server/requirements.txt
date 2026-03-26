@@ -20,3 +20,14 @@ python-multipart>=0.0.9
 
 # Capabilities
 yfinance>=0.2.40
+
+# STT
+torch
+torchaudio
+transformers>=4.53.0
+accelerate
+sounddevice
+soundfile
+librosa
+numpy
+huggingface_hub
