@@ -1,5 +1,5 @@
 /**
- * API Integration Layer for AIHub
+ * API Integration Layer for Plura
  * 
  * This file contains the connection points for the external AI services:
  * - Text/Chat: OpenAI-compatible endpoint (e.g., local Ollama instance)

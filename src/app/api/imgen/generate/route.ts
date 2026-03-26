@@ -87,7 +87,7 @@ export async function POST(req: Request) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                client_id: "aihub_client_" + Date.now(),
+                client_id: "plura_client_" + Date.now(),
                 prompt: workflow
             }),
         });

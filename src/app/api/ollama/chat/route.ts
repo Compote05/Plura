@@ -61,10 +61,6 @@ export async function POST(req: Request) {
     const authHeader = req.headers.get('Authorization') || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
-    if (!RAG_API_URL && activeCapabilityIds?.length > 0) {
-        // Capabilities requested but service not configured — skip silently
-    }
-
     try {
         const body = await req.json();
         const { model, messages, stream, think, attachedDocIds, activeCapabilityIds } = body;
@@ -121,14 +117,14 @@ export async function POST(req: Request) {
                 // Inject system prompt to instruct the model to use tools
                 const systemPrompt = {
                     role: 'system',
-                    content: 'You have access to real-time tools. When the user asks for current data (prices, news, market info, etc.), you MUST call the appropriate tool to get up-to-date information. Do not make up data — always use the tools provided.',
+                    content: 'You have access to real-time tools. When the user asks for current data (prices, news, market info, recent events, etc.), you MUST call the appropriate tool. For anything that happened after your training cutoff or that requires current information, use search_web. If the user provides a URL, use fetch_url. Do not make up data — always use the tools provided.',
                 };
                 const messagesWithSystem = messages[0]?.role === 'system'
                     ? messages
                     : [systemPrompt, ...messages];
 
                 // First pass: non-streaming to detect tool calls
-                const firstPayload: Record<string, unknown> = { model, messages: messagesWithSystem, tools, stream: false };
+                const firstPayload: Record<string, unknown> = { model, messages: messagesWithSystem, tools, stream: false, think: think ?? false };
                 if (think) firstPayload.options = { num_predict: 4096 };
 
                 const firstRes = await fetch(`${OLLAMA_URL}/api/chat`, {
@@ -152,43 +148,95 @@ export async function POST(req: Request) {
 
                 if (toolCalls && toolCalls.length > 0) {
                     console.log('[Capabilities] Tool calls detected:', toolCalls.map(tc => tc.function.name));
-                    // Execute all tool calls
-                    const toolResults: Array<{
-                        tool_name: string;
-                        result: { text: string; result_type: string; data: Record<string, unknown> };
-                    }> = [];
-
-                    for (const tc of toolCalls) {
-                        const result = await executeToolCall(tc.function.name, tc.function.arguments, token);
-                        toolResults.push({ tool_name: tc.function.name, result });
-                    }
-
-                    // Build updated conversation for final response
-                    // tool messages require tool_name per Ollama spec
-                    const updatedMessages = [
-                        ...messagesWithSystem,
-                        firstData.message, // assistant message with tool_calls intact
-                        ...toolResults.map((tr) => ({
-                            role: 'tool',
-                            tool_name: tr.tool_name,
-                            content: tr.result.text,
-                        })),
-                    ];
 
                     const encoder = new TextEncoder();
+
+                    const emit = (controller: ReadableStreamDefaultController, obj: unknown) => {
+                        controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+                    };
+
                     const readable = new ReadableStream({
                         async start(controller) {
-                            // Emit tool result events first
-                            for (const tr of toolResults) {
-                                const event =
-                                    JSON.stringify({
+                            const toolResults: Array<{
+                                tool_name: string;
+                                result: { text: string; result_type: string; data: Record<string, unknown> };
+                            }> = [];
+
+                            for (const tc of toolCalls) {
+                                const isWebSearch = tc.function.name === 'search_web';
+                                const isFetchUrl = tc.function.name === 'fetch_url';
+
+                                // Forward first-pass thinking to frontend
+                                if (firstData.message?.thinking) {
+                                    emit(controller, { type: 'thinking_partial', text: firstData.message.thinking });
+                                }
+
+                                if (isWebSearch) {
+                                    emit(controller, {
+                                        type: 'web_search_start',
+                                        query: tc.function.arguments.query,
+                                    });
+                                } else if (isFetchUrl) {
+                                    emit(controller, {
+                                        type: 'web_search_start',
+                                        query: tc.function.arguments.url,
+                                    });
+                                    emit(controller, {
+                                        type: 'web_search_url',
+                                        url: tc.function.arguments.url,
+                                        title: String(tc.function.arguments.url),
+                                        index: 0,
+                                    });
+                                }
+
+                                const result = await executeToolCall(tc.function.name, tc.function.arguments, token);
+                                toolResults.push({ tool_name: tc.function.name, result });
+
+                                if (isWebSearch && result.result_type === 'web_search') {
+                                    const sources = (result.data as { sources?: Array<{ url: string; title: string }> }).sources ?? [];
+                                    for (let i = 0; i < sources.length; i++) {
+                                        emit(controller, {
+                                            type: 'web_search_url',
+                                            url: sources[i].url,
+                                            title: sources[i].title,
+                                            index: i,
+                                        });
+                                        await new Promise(r => setTimeout(r, 60));
+                                    }
+                                    emit(controller, {
+                                        type: 'web_search_done',
+                                        query: tc.function.arguments.query,
+                                        sources,
+                                    });
+                                } else if (isFetchUrl) {
+                                    emit(controller, {
+                                        type: 'web_search_done',
+                                        query: tc.function.arguments.url,
+                                        sources: [{
+                                            url: tc.function.arguments.url,
+                                            title: (result.data as { title?: string }).title ?? String(tc.function.arguments.url),
+                                        }],
+                                    });
+                                } else {
+                                    emit(controller, {
                                         type: 'tool_result',
-                                        tool_name: tr.tool_name,
-                                        result_type: tr.result.result_type,
-                                        data: tr.result.data,
-                                    }) + '\n';
-                                controller.enqueue(encoder.encode(event));
+                                        tool_name: tc.function.name,
+                                        result_type: result.result_type,
+                                        data: result.data,
+                                    });
+                                }
                             }
+
+                            // Build updated conversation for final response
+                            const updatedMessages = [
+                                ...messagesWithSystem,
+                                firstData.message,
+                                ...toolResults.map((tr) => ({
+                                    role: 'tool',
+                                    tool_name: tr.tool_name,
+                                    content: tr.result.text,
+                                })),
+                            ];
 
                             // Stream final Ollama response
                             const finalPayload: Record<string, unknown> = {
@@ -225,16 +273,25 @@ export async function POST(req: Request) {
                     });
                 }
 
-                // No tool calls — wrap non-streaming response as a single NDJSON line
-                const encoder = new TextEncoder();
-                const fakeStream = new ReadableStream({
-                    start(controller) {
-                        controller.enqueue(encoder.encode(JSON.stringify(firstData) + '\n'));
-                        controller.close();
-                    },
+                // No tool calls — stream properly
+                const streamPayload: Record<string, unknown> = { model, messages: messagesWithSystem, stream: true, think };
+                if (think) streamPayload.options = { num_predict: 4096 };
+
+                const streamRes = await fetch(`${OLLAMA_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(streamPayload),
                 });
-                return new Response(fakeStream, {
-                    headers: { 'Content-Type': 'application/x-ndjson' },
+
+                if (!streamRes.ok) {
+                    return NextResponse.json({ error: `Ollama error: ${streamRes.statusText}` }, { status: streamRes.status });
+                }
+
+                return new Response(streamRes.body, {
+                    headers: {
+                        'Content-Type': streamRes.headers.get('Content-Type') || 'application/x-ndjson',
+                        'Transfer-Encoding': 'chunked',
+                    },
                 });
             }
         }

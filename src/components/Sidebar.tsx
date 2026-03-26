@@ -154,7 +154,7 @@ export default function Sidebar() {
                 isCollapsed ? "justify-center" : "justify-between"
             )}>
                 {!isCollapsed && (
-                    <span className="text-sm font-semibold text-sidebar-foreground tracking-tight select-none">AI.HUB</span>
+                    <span className="text-sm font-semibold text-sidebar-foreground tracking-tight select-none">Plura</span>
                 )}
                 <button
                     onClick={() => setIsCollapsed(!isCollapsed)}

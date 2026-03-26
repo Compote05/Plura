@@ -394,11 +394,9 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
 
     return (
         <motion.div
-            layout
             initial={false}
-            transition={{ type: "spring", bounce: 0, duration: 0.6 }}
             className={cn(
-                "w-full max-w-3xl mx-auto",
+                "w-full max-w-4xl mx-auto",
                 isInitial ? "mt-[2vh]" : "mt-0"
             )}
         >
@@ -440,7 +438,7 @@ export default function InputBar({ user, onSubmit, isInitial, isStreaming, onSto
 
                 <form
                     onSubmit={handleSubmit}
-                    className="bg-card border border-border rounded-xl flex flex-col p-2 gap-1 focus-within:border-foreground/15 transition-colors mx-auto w-full max-w-3xl"
+                    className="bg-card border border-border rounded-xl flex flex-col p-2 gap-1 focus-within:border-foreground/15 transition-colors mx-auto w-full max-w-4xl"
                 >
                     {/* Attachments */}
                     {attachments.length > 0 && (

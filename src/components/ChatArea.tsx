@@ -10,7 +10,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css"; // Math styling
 import InputBar from "./InputBar";
-import { Copy, Check, ChevronDown, BrainCircuit, ArrowDown, FileText } from "lucide-react";
+import { Copy, Check, ChevronDown, BrainCircuit, ArrowDown, FileText, ExternalLink } from "lucide-react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ImageViewer from "./ImageViewer";
@@ -100,6 +100,86 @@ function ThinkingBlock({ text, isStreaming }: { text: string; isStreaming?: bool
     );
 }
 
+interface WebSearchSource {
+    url: string;
+    title: string;
+}
+
+interface WebSearch {
+    query: string;
+    sources: WebSearchSource[];
+    isSearching: boolean;
+}
+
+function SourcesBadge({ sources }: { sources: WebSearchSource[] }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, [open]);
+
+    const getDomain = (url: string) => {
+        try { return new URL(url).hostname.replace("www.", ""); } catch { return url; }
+    };
+
+    const topFavicons = sources.slice(0, 3);
+
+    return (
+        <div ref={ref} className="relative inline-block">
+            <button
+                type="button"
+                onClick={() => setOpen(!open)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.06] transition-all text-white/50 hover:text-white/80"
+            >
+                <div className="flex -space-x-1">
+                    {topFavicons.map((s, i) => (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img key={i} src={`https://www.google.com/s2/favicons?domain=${getDomain(s.url)}&sz=16`} alt="" className="w-3.5 h-3.5 rounded-sm ring-1 ring-black" />
+                    ))}
+                </div>
+                <span className="text-[12px] font-medium">{sources.length} source{sources.length !== 1 ? "s" : ""}</span>
+            </button>
+            <AnimatePresence>
+                {open && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute bottom-full mb-2 left-0 z-50 w-72 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden"
+                    >
+                        <div className="px-3 py-2 border-b border-white/[0.06]">
+                            <span className="text-[11px] text-white/40 uppercase tracking-wider font-medium">Sources</span>
+                        </div>
+                        <div className="flex flex-col max-h-64 overflow-y-auto custom-scrollbar">
+                            {sources.map((s, i) => (
+                                <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.05] transition-colors group/s"
+                                    onClick={() => setOpen(false)}
+                                >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={`https://www.google.com/s2/favicons?domain=${getDomain(s.url)}&sz=16`} alt="" className="w-4 h-4 rounded-sm shrink-0 opacity-70" />
+                                    <div className="flex flex-col overflow-hidden flex-1 min-w-0">
+                                        <span className="text-[12px] text-white/70 truncate group-hover/s:text-white/90 transition-colors">{s.title || getDomain(s.url)}</span>
+                                        <span className="text-[11px] text-white/30 truncate">{getDomain(s.url)}</span>
+                                    </div>
+                                    <ExternalLink className="w-3 h-3 text-white/20 group-hover/s:text-white/50 transition-colors shrink-0" />
+                                </a>
+                            ))}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
 interface Message {
     id: string;
     role: "user" | "assistant";
@@ -108,6 +188,7 @@ interface Message {
     thinking?: string;
     attachedDocs?: DatabaseDocument[];
     toolResults?: ToolResult[];
+    webSearch?: WebSearch;
 }
 
 interface DatabaseDocument {
@@ -336,6 +417,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
         setIsStreaming(true);
         let responseText = "";
         const pendingToolResults: ToolResult[] = [];
+        let pendingWebSearch: WebSearch | undefined;
 
         try {
             // Setup AbortController for stopping generation
@@ -382,64 +464,120 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
             const reader = res.body?.getReader();
             const decoder = new TextDecoder();
             let thinkingText = "";
+            let lineBuffer = "";
+
+            const processLine = (line: string) => {
+                if (!line.trim()) return;
+                try {
+                    const parsed = JSON.parse(line);
+
+                    if (parsed.type === 'thinking_partial') {
+                        thinkingText += parsed.text;
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantId ? { ...msg, thinking: thinkingText } : msg
+                            )
+                        );
+                        return;
+                    }
+
+                    if (parsed.type === 'web_search_start') {
+                        pendingWebSearch = { query: parsed.query, sources: [], isSearching: true };
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantId ? { ...msg, webSearch: pendingWebSearch } : msg
+                            )
+                        );
+                        return;
+                    }
+
+                    if (parsed.type === 'web_search_url') {
+                        if (pendingWebSearch) {
+                            pendingWebSearch = { ...pendingWebSearch, sources: [...pendingWebSearch.sources, { url: parsed.url, title: parsed.title }] };
+                            const ws = pendingWebSearch;
+                            setMessages((prev) =>
+                                prev.map((msg) => msg.id === assistantId ? { ...msg, webSearch: ws } : msg)
+                            );
+                        }
+                        return;
+                    }
+
+                    if (parsed.type === 'web_search_done') {
+                        pendingWebSearch = { query: parsed.query, sources: parsed.sources, isSearching: false };
+                        const ws = pendingWebSearch;
+                        setMessages((prev) =>
+                            prev.map((msg) => msg.id !== assistantId ? msg : { ...msg, webSearch: ws })
+                        );
+                        return;
+                    }
+
+                    if (parsed.type === 'tool_result') {
+                        const tr: ToolResult = { tool_name: parsed.tool_name, result_type: parsed.result_type, data: parsed.data };
+                        pendingToolResults.push(tr);
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantId ? { ...msg, toolResults: [...pendingToolResults] } : msg
+                            )
+                        );
+                        return;
+                    }
+
+                    if (parsed.message?.thinking) {
+                        thinkingText += parsed.message.thinking;
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantId ? { ...msg, thinking: thinkingText } : msg
+                            )
+                        );
+                    }
+                    if (parsed.message?.content) {
+                        responseText += parsed.message.content;
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === assistantId ? { ...msg, content: responseText } : msg
+                            )
+                        );
+                    }
+                } catch {
+                    // incomplete line — will be retried with more data
+                }
+            };
 
             if (reader) {
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n').filter(line => line.trim() !== '');
-
-                    for (const line of lines) {
-                        try {
-                            const parsed = JSON.parse(line);
-
-                            if (parsed.type === 'tool_result') {
-                                const tr: ToolResult = {
-                                    tool_name: parsed.tool_name,
-                                    result_type: parsed.result_type,
-                                    data: parsed.data,
-                                };
-                                pendingToolResults.push(tr);
-                                setMessages((prev) =>
-                                    prev.map((msg) =>
-                                        msg.id === assistantId
-                                            ? { ...msg, toolResults: [...pendingToolResults] }
-                                            : msg
-                                    )
-                                );
-                                continue;
-                            }
-
-                            let requiresUpdate = false;
-
-                            if (parsed.message?.thinking) {
-                                thinkingText += parsed.message.thinking;
-                                requiresUpdate = true;
-                            }
-                            if (parsed.message?.content) {
-                                responseText += parsed.message.content;
-                                requiresUpdate = true;
-                            }
-
-                            if (requiresUpdate) {
-                                setMessages((prev) =>
-                                    prev.map((msg) =>
-                                        msg.id === assistantId ? { ...msg, content: responseText, thinking: thinkingText } : msg
-                                    )
-                                );
-                            }
-                        } catch (e) {
-                            console.error("Error parsing stream chunk", e);
-                        }
+                    if (done) {
+                        if (lineBuffer.trim()) processLine(lineBuffer);
+                        break;
                     }
+
+                    lineBuffer += decoder.decode(value, { stream: true });
+                    const lines = lineBuffer.split('\n');
+                    lineBuffer = lines.pop() ?? "";
+                    for (const line of lines) processLine(line);
+
                 }
+            }
+
+            // Force-stop any in-progress web search
+            if (pendingWebSearch?.isSearching) {
+                pendingWebSearch = { ...pendingWebSearch, isSearching: false };
+                const ws = pendingWebSearch;
+                setMessages((prev) => prev.map(m =>
+                    m.id === assistantId ? { ...m, webSearch: ws } : m
+                ));
             }
 
             // Stream complete, save final message to DB
             if (currentThreadId && user) {
-                const finalAssistantMsg: Message = { id: assistantId, role: "assistant", content: responseText, thinking: thinkingText, toolResults: pendingToolResults.length > 0 ? pendingToolResults : undefined };
+                const finalAssistantMsg: Message = {
+                    id: assistantId,
+                    role: "assistant",
+                    content: responseText,
+                    thinking: thinkingText,
+                    toolResults: pendingToolResults.length > 0 ? pendingToolResults : undefined,
+                    webSearch: pendingWebSearch,
+                };
                 const finalMessages = [...newMessagesContext, finalAssistantMsg];
                 await supabase
                     .from('threads')
@@ -564,10 +702,10 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     ref={scrollContainerRef}
                     onScroll={handleScroll}
                     className={cn(
-                        "absolute inset-0 w-full overflow-y-auto px-4 z-10 transition-all duration-500 pointer-events-auto custom-scrollbar",
+                        "absolute inset-0 w-full overflow-y-auto px-8 z-10 transition-all duration-500 pointer-events-auto custom-scrollbar",
                         isInitial ? "opacity-0 translate-y-4" : "opacity-100 translate-y-0"
                     )}>
-                    <div className="max-w-3xl px-2 mx-auto flex flex-col gap-6 pt-16 pb-32">
+                    <div className="max-w-4xl px-2 mx-auto flex flex-col pt-16 pb-32">
                         <AnimatePresence initial={false}>
                             {messages.map((msg, idx) => (
                                 <motion.div
@@ -577,7 +715,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                     transition={{ type: "spring", stiffness: 200, damping: 20 }}
                                     className={cn(
                                         "flex w-full",
-                                        msg.role === "user" ? "justify-end" : "justify-start"
+                                        msg.role === "user" ? "justify-end mb-10 mt-2" : "justify-start"
                                     )}
                                 >
                                     <div
@@ -587,7 +725,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                                 : "w-full text-foreground/90 text-[15px] leading-relaxed group"
                                         )}
                                     >
-                                        {msg.role === "assistant" && msg.content === "" && !msg.thinking ? (
+                                        {msg.role === "assistant" && msg.content === "" && !msg.thinking && !msg.webSearch ? (
                                             <div className="flex items-center gap-1 h-6 px-1">
                                                 <motion.div
                                                     animate={{ y: [0, -5, 0] }}
@@ -640,7 +778,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                                     </div>
                                                 )}
                                                 {msg.content && (
-                                                    <div className="px-5 py-3.5 rounded-2xl bg-white/[0.04] text-white text-[15px] leading-relaxed border border-white/[0.05]">
+                                                    <div className="px-4 py-2.5 rounded-2xl bg-white/[0.04] text-white text-[15px] leading-relaxed border border-white/[0.05]">
                                                         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                                                     </div>
                                                 )}
@@ -657,72 +795,82 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                                                         ))}
                                                     </div>
                                                 )}
-                                                <div className="prose prose-invert max-w-none w-full prose-p:leading-relaxed prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-none prose-pre:shadow-none">
-                                                    <ReactMarkdown
-                                                        remarkPlugins={[remarkGfm, remarkMath]}
-                                                        rehypePlugins={[rehypeKatex]}
-                                                        components={{
-                                                            code({ node, className, children, ...props }: any) {
-                                                                const match = /language-(\w+)/.exec(className || '');
-                                                                const language = match ? match[1] : '';
-                                                                const isInline = !match;
+                                                {msg.content && (
+                                                    <div className="prose prose-invert max-w-none w-full prose-p:leading-relaxed prose-pre:p-0 prose-pre:bg-transparent prose-pre:border-none prose-pre:shadow-none">
+                                                        <ReactMarkdown
+                                                            remarkPlugins={[remarkGfm, remarkMath]}
+                                                            rehypePlugins={[rehypeKatex]}
+                                                            components={{
+                                                                a({ href, children, ...props }: any) {
+                                                                    return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+                                                                },
+                                                                code({ node, className, children, ...props }: any) {
+                                                                    const match = /language-(\w+)/.exec(className || '');
+                                                                    const language = match ? match[1] : '';
+                                                                    const isInline = !match;
 
-                                                                if (!isInline && match) {
-                                                                    return (
-                                                                        <div className="relative group/code rounded-xl overflow-hidden border border-white/10 shadow-lg">
-                                                                            <div className="flex items-center justify-between pl-3 pr-1.5 py-1 bg-[#1A1A1A] border-b border-white/5">
-                                                                                <span className="text-[11px] uppercase tracking-wider font-semibold text-white/40">{language}</span>
-                                                                                <CopyButton text={String(children).replace(/\n$/, '')} />
+                                                                    if (!isInline && match) {
+                                                                        return (
+                                                                            <div className="relative group/code rounded-xl overflow-hidden border border-white/10 shadow-lg">
+                                                                                <div className="flex items-center justify-between pl-3 pr-1.5 py-1 bg-[#1A1A1A] border-b border-white/5">
+                                                                                    <span className="text-[11px] uppercase tracking-wider font-semibold text-white/40">{language}</span>
+                                                                                    <CopyButton text={String(children).replace(/\n$/, '')} />
+                                                                                </div>
+                                                                                <SyntaxHighlighter
+                                                                                    {...props}
+                                                                                    style={vscDarkPlus as any}
+                                                                                    language={language}
+                                                                                    PreTag="div"
+                                                                                    customStyle={{
+                                                                                        margin: 0,
+                                                                                        background: '#0D0D0D',
+                                                                                        padding: '1.25rem',
+                                                                                        fontSize: '13px',
+                                                                                        lineHeight: '1.6'
+                                                                                    }}
+                                                                                >
+                                                                                    {String(children).replace(/\n$/, '')}
+                                                                                </SyntaxHighlighter>
                                                                             </div>
-                                                                            <SyntaxHighlighter
-                                                                                {...props}
-                                                                                style={vscDarkPlus as any}
-                                                                                language={language}
-                                                                                PreTag="div"
-                                                                                customStyle={{
-                                                                                    margin: 0,
-                                                                                    background: '#0D0D0D', // Very dark for code
-                                                                                    padding: '1.25rem',
-                                                                                    fontSize: '13px',
-                                                                                    lineHeight: '1.6'
-                                                                                }}
-                                                                            >
-                                                                                {String(children).replace(/\n$/, '')}
-                                                                            </SyntaxHighlighter>
+                                                                        );
+                                                                    }
+                                                                    return (
+                                                                        <code className={cn("bg-white/[0.08] px-1.5 py-0.5 rounded-md text-[13px] font-mono text-white/90", className)} {...props}>
+                                                                            {children}
+                                                                        </code>
+                                                                    );
+                                                                },
+                                                                img({ node, src, alt, ...props }: any) {
+                                                                    if (!src) return null;
+                                                                    return (
+                                                                        <div className="my-4 relative group/img inline-flex cursor-zoom-in rounded-xl overflow-hidden border border-white/10 shadow-sm hover:shadow-md transition-all hover:border-white/20 bg-black/20" onClick={() => handleImageClick(src, alt || "")}>
+                                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                            <img src={src} alt={alt || "Generated Image"} className="max-w-full sm:max-w-[400px] h-auto object-cover m-0" {...props} />
+                                                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex flex-col items-center justify-center pointer-events-none">
+                                                                                <div className="text-white/90 font-medium text-xs bg-black/60 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-white/10 shadow-lg translate-y-2 group-hover/img:translate-y-0 transition-transform">View Full Screen</div>
+                                                                            </div>
                                                                         </div>
                                                                     );
                                                                 }
-                                                                return (
-                                                                    <code className={cn("bg-white/[0.08] px-1.5 py-0.5 rounded-md text-[13px] font-mono text-white/90", className)} {...props}>
-                                                                        {children}
-                                                                    </code>
-                                                                );
-                                                            },
-                                                            img({ node, src, alt, ...props }: any) {
-                                                                if (!src) return null;
-                                                                return (
-                                                                    <div className="my-4 relative group/img inline-flex cursor-zoom-in rounded-xl overflow-hidden border border-white/10 shadow-sm hover:shadow-md transition-all hover:border-white/20 bg-black/20" onClick={() => handleImageClick(src, alt || "")}>
-                                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                                        <img src={src} alt={alt || "Generated Image"} className="max-w-full sm:max-w-[400px] h-auto object-cover m-0" {...props} />
-                                                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex flex-col items-center justify-center pointer-events-none">
-                                                                            <div className="text-white/90 font-medium text-xs bg-black/60 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-white/10 shadow-lg translate-y-2 group-hover/img:translate-y-0 transition-transform">View Full Screen</div>
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                        }}
-                                                    >
-                                                        {msg.content}
-                                                    </ReactMarkdown>
-                                                </div>
-                                                <div className={cn(
-                                                    "flex justify-start transition-opacity mt-2",
-                                                    (msg.role === "assistant" && idx === lastAssistantMessageIndex && !isStreaming) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                                                )}>
-                                                    {!(isStreaming && idx === lastAssistantMessageIndex) && (
-                                                        <CopyButton text={msg.content} />
-                                                    )}
-                                                </div>
+                                                            }}
+                                                        >
+                                                            {msg.content}
+                                                        </ReactMarkdown>
+                                                    </div>
+                                                )}
+                                                {msg.content && (
+                                                    <div className={cn(
+                                                        "flex items-center gap-2 justify-start transition-opacity mt-2",
+                                                        (msg.role === "assistant" && idx === lastAssistantMessageIndex && !isStreaming) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                                    )}>
+                                                        {!(isStreaming && idx === lastAssistantMessageIndex) && (
+                                                            <CopyButton text={msg.content} />
+                                                        )}
+                                                        {!msg.webSearch?.isSearching && msg.webSearch && msg.webSearch.sources.length > 0 && !(isStreaming && idx === lastAssistantMessageIndex) && (
+                                                            <SourcesBadge sources={msg.webSearch.sources} />
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -771,7 +919,7 @@ export default function ChatArea({ user, activeThreadId, onThreadCreated, onThre
                     className="absolute w-full z-20 px-4 flex justify-center pointer-events-none"
                 >
                     <div className={cn(
-                        "w-full max-w-3xl pb-8 relative pointer-events-auto bg-[#171615]",
+                        "w-full max-w-4xl pb-8 relative pointer-events-auto bg-[#171615]",
                         !isInitial && "before:absolute before:inset-0 before:bg-transparent before:-z-10 before:pointer-events-none"
                     )}>
                         <div>
