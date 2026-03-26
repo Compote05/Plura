@@ -183,12 +183,6 @@ function ExploreModes() {
     );
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-    finance: "Finance",
-    news: "News",
-    weather: "Weather",
-    search: "Search",
-};
 
 function CapabilitiesSection({
     user,
@@ -203,166 +197,91 @@ function CapabilitiesSection({
     onToggle: (id: string, enabled: boolean) => void;
     getIcon: (icon: string, color: string) => React.ReactNode;
 }) {
-    const [activeFilter, setActiveFilter] = useState<string>("all");
-
-    const categories = ["all", ...Array.from(new Set(capabilities.map((c) => c.id)))];
-
-    const filtered = activeFilter === "all"
-        ? capabilities
-        : capabilities.filter((c) => c.id === activeFilter);
-
     const activeCount = capabilities.filter((c) => c.enabled).length;
-
-    const colorDot: Record<string, string> = {
-        emerald: "bg-emerald-400",
-        blue: "bg-blue-400",
-        amber: "bg-amber-400",
-        rose: "bg-rose-400",
-        purple: "bg-purple-400",
-    };
 
     if (!user) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl">
-                <Zap className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
-                <h3 className="text-lg font-medium text-white mb-2">Login Required</h3>
-                <p className="text-white/40 text-[15px] max-w-sm">Sign in to manage capabilities.</p>
+                <Zap className="w-8 h-8 text-white/15 mb-3" strokeWidth={1.5} />
+                <p className="text-white/40 text-[14px]">Sign in to manage capabilities.</p>
             </div>
         );
     }
 
     return (
-        <div className="flex gap-8 flex-1 pb-12 min-h-0">
-            {/* Left sidebar */}
-            <div className="w-44 shrink-0 flex flex-col gap-1 pt-1">
-                <p className="text-[10px] font-medium text-white/25 uppercase tracking-[0.15em] px-3 mb-3">
-                    Categories
+        <div className="flex flex-col flex-1 pb-12 min-h-0">
+            {/* Header stats */}
+            <div className="flex items-center justify-between mb-6">
+                <p className="text-[13px] text-white/30">
+                    {activeCount === 0
+                        ? "No capabilities enabled"
+                        : `${activeCount} of ${capabilities.length} enabled`}
                 </p>
-                {categories.map((cat) => {
-                    const cap = capabilities.find((c) => c.id === cat);
-                    const isActive = activeFilter === cat;
-                    return (
-                        <button
-                            key={cat}
-                            onClick={() => setActiveFilter(cat)}
-                            className={cn(
-                                "flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-medium transition-all text-left",
-                                isActive
-                                    ? "bg-white/[0.07] text-white"
-                                    : "text-white/40 hover:text-white/70 hover:bg-white/[0.03]"
-                            )}
-                        >
-                            <div className="flex items-center gap-2.5">
-                                {cat === "all" ? (
-                                    <div className="w-1.5 h-1.5 rounded-full bg-white/30" />
-                                ) : (
-                                    <div className={cn("w-1.5 h-1.5 rounded-full", colorDot[cap?.color || ""] || "bg-white/30")} />
-                                )}
-                                {cat === "all" ? "All" : (CATEGORY_LABELS[cat] || cat)}
-                            </div>
-                            <span className={cn(
-                                "text-[11px] tabular-nums",
-                                isActive ? "text-white/50" : "text-white/20"
-                            )}>
-                                {cat === "all" ? capabilities.length : 1}
-                            </span>
-                        </button>
-                    );
-                })}
-
-                {/* Active count */}
-                <div className="mt-auto pt-6 px-3">
-                    <div className="text-[10px] text-white/20 uppercase tracking-widest mb-1">Active</div>
-                    <div className="text-[22px] font-semibold text-white/80 leading-none">{activeCount}</div>
-                    <div className="text-[11px] text-white/25 mt-0.5">of {capabilities.length} enabled</div>
-                </div>
             </div>
 
-            {/* Main content */}
-            <div className="flex-1 min-w-0">
-                {capabilities.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl">
-                        <Zap className="w-10 h-10 text-white/20 mb-4" strokeWidth={1.5} />
-                        <p className="text-white/40 text-[15px]">No capabilities found. Make sure the api-server is running.</p>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                        <AnimatePresence mode="popLayout">
-                            {filtered.map((cap) => (
-                                <motion.div
-                                    key={cap.id}
-                                    layout
-                                    initial={false}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0, scale: 0.97 }}
-                                    transition={{ duration: 0.15 }}
-                                    className={cn(
-                                        "relative flex flex-col p-5 rounded-2xl border transition-all duration-300",
-                                        cap.enabled
-                                            ? "bg-white/[0.04] border-white/10"
-                                            : "bg-white/[0.015] border-white/[0.06]"
-                                    )}
-                                >
-                                    {/* Top row */}
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-3">
-                                            {getIcon(cap.icon, cap.color)}
-                                            <div>
-                                                <h4 className="text-[14px] font-semibold text-white/90 leading-tight">
-                                                    {cap.name}
-                                                </h4>
-                                                <div className="flex items-center gap-1.5 mt-1">
-                                                    <div className={cn(
-                                                        "w-1.5 h-1.5 rounded-full transition-all",
-                                                        cap.enabled ? "bg-emerald-400" : "bg-white/15"
-                                                    )} />
-                                                    <span className="text-[11px] text-white/30">
-                                                        {cap.enabled ? "Active" : "Inactive"}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
+            {capabilities.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-white/5 rounded-2xl">
+                    <Zap className="w-8 h-8 text-white/15 mb-3" strokeWidth={1.5} />
+                    <p className="text-white/40 text-[14px]">No capabilities found. Make sure the api-server is running.</p>
+                </div>
+            ) : (
+                <div className="flex flex-col divide-y divide-white/[0.05]">
+                    {capabilities.map((cap) => (
+                        <div
+                            key={cap.id}
+                            onClick={() => !togglingCap && onToggle(cap.id, cap.enabled)}
+                            className="flex items-center gap-4 py-4 cursor-pointer rounded-xl px-3 -mx-3 hover:bg-white/[0.03] transition-colors"
+                        >
+                            {/* Icon */}
+                            <div className={cn("shrink-0 transition-opacity", !cap.enabled && "opacity-40")}>
+                                {getIcon(cap.icon, cap.color)}
+                            </div>
 
-                                        {/* Toggle */}
-                                        <button
-                                            onClick={() => onToggle(cap.id, cap.enabled)}
-                                            disabled={togglingCap === cap.id}
-                                            className={cn(
-                                                "relative w-10 h-5.5 rounded-full transition-all duration-300 disabled:opacity-40 shrink-0 mt-0.5",
-                                                cap.enabled ? "bg-emerald-500/80" : "bg-white/10"
-                                            )}
-                                            style={{ height: 22, width: 40 }}
-                                        >
-                                            <motion.div
-                                                animate={{ x: cap.enabled ? 20 : 2 }}
-                                                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                                                className="absolute top-[3px] w-4 h-4 bg-white rounded-full shadow-sm"
-                                            />
-                                        </button>
-                                    </div>
-
-                                    {/* Description */}
-                                    <p className="text-[12.5px] text-white/40 leading-relaxed mb-4 flex-1">
-                                        {cap.description}
-                                    </p>
-
-                                    {/* Tools */}
-                                    <div className="flex flex-wrap gap-1.5">
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                    <span className={cn(
+                                        "text-[13px] font-medium transition-colors",
+                                        cap.enabled ? "text-white/90" : "text-white/40"
+                                    )}>
+                                        {cap.name}
+                                    </span>
+                                    <div className="flex items-center gap-1">
                                         {cap.tools.map((tool) => (
-                                            <span
-                                                key={tool.name}
-                                                className="text-[10px] px-2 py-1 bg-white/[0.04] border border-white/[0.06] text-white/30 rounded-lg font-mono"
-                                            >
+                                            <span key={tool.name} className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.05] text-white/25 font-mono">
                                                 {tool.name}
                                             </span>
                                         ))}
                                     </div>
-                                </motion.div>
-                            ))}
-                        </AnimatePresence>
-                    </div>
-                )}
-            </div>
+                                </div>
+                                <p className="text-[12px] text-white/25 truncate">
+                                    {cap.description}
+                                </p>
+                            </div>
+
+                            {/* Toggle */}
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onToggle(cap.id, cap.enabled); }}
+                                disabled={togglingCap === cap.id}
+                                className={cn(
+                                    "relative rounded-full transition-all duration-200 disabled:opacity-40 shrink-0",
+                                    cap.enabled ? "bg-white/90" : "bg-white/10 hover:bg-white/15"
+                                )}
+                                style={{ height: 20, width: 36 }}
+                            >
+                                <motion.div
+                                    animate={{ x: cap.enabled ? 18 : 2 }}
+                                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                                    className={cn(
+                                        "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-colors",
+                                        cap.enabled ? "bg-black" : "bg-white/60"
+                                    )}
+                                />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -509,15 +428,17 @@ export default function DocumentsArea({ user }: DocumentsAreaProps) {
             emerald: "text-emerald-400 bg-emerald-500/10",
             blue: "text-blue-400 bg-blue-500/10",
             amber: "text-amber-400 bg-amber-500/10",
+            cyan: "text-cyan-400 bg-cyan-500/10",
         };
         const cls = colorMap[color] || "text-white/50 bg-white/5";
         const iconMap: Record<string, React.ReactNode> = {
-            TrendingUp: <TrendingUp size={18} strokeWidth={1.5} />,
-            Newspaper: <Newspaper size={18} strokeWidth={1.5} />,
+            TrendingUp: <TrendingUp size={16} strokeWidth={1.5} />,
+            Newspaper: <Newspaper size={16} strokeWidth={1.5} />,
+            Globe: <Search size={16} strokeWidth={1.5} />,
         };
         return (
-            <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${cls}`}>
-                {iconMap[iconName] ?? <Zap size={18} strokeWidth={1.5} />}
+            <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${cls}`}>
+                {iconMap[iconName] ?? <Zap size={16} strokeWidth={1.5} />}
             </div>
         );
     };
