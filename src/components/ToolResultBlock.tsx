@@ -247,28 +247,29 @@ function MarketOverviewBlock({ data }: { data: { markets: MarketItem[] } }) {
         <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="my-3 grid grid-cols-2 gap-2"
+            className="my-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
         >
-            {data.markets.map((m) => {
-                const isUp = m.change_pct >= 0;
-                const textColor = isUp ? "text-emerald-400" : "text-red-400";
-                const borderColor = isUp ? "border-emerald-500/15" : "border-red-500/15";
-                const bg = isUp ? "bg-emerald-500/[0.05]" : "bg-red-500/[0.05]";
-                return (
-                    <div key={m.symbol} className={`rounded-xl border ${borderColor} ${bg} px-4 py-3.5`}>
-                        <div className="text-[11px] text-white/35 uppercase tracking-widest mb-1.5 font-medium">
-                            {m.name}
+            <div className="divide-y divide-white/[0.04]">
+                {data.markets.map((m) => {
+                    const isUp = m.change_pct >= 0;
+                    return (
+                        <div key={m.symbol} className="flex items-center justify-between px-5 py-3">
+                            <div className="flex items-center gap-3">
+                                <span className="text-[13px] font-medium text-white/80">{m.name}</span>
+                                <span className="text-[11px] text-white/25 font-mono">{m.symbol}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="text-[13px] font-medium text-white/70 tabular-nums">
+                                    {m.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                                </span>
+                                <span className={`text-[12px] font-medium tabular-nums w-16 text-right ${isUp ? "text-emerald-400" : "text-red-400"}`}>
+                                    {isUp ? "+" : ""}{m.change_pct.toFixed(2)}%
+                                </span>
+                            </div>
                         </div>
-                        <div className="text-[17px] font-semibold text-white leading-none">
-                            {m.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}
-                        </div>
-                        <div className={`text-[12px] font-medium mt-1.5 ${textColor}`}>
-                            {isUp ? "+" : ""}
-                            {m.change_pct.toFixed(2)}%
-                        </div>
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </motion.div>
     );
 }

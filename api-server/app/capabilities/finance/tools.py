@@ -24,7 +24,9 @@ class FinanceCapability(CapabilityBase):
                     "Use this when the user asks about the price, value, or chart of a SPECIFIC asset "
                     "(stock, crypto, commodity, index). Pass the asset name or ticker symbol as-is — "
                     "the tool will automatically resolve it. Examples: 'bitcoin', 'apple', 'pétrole', "
-                    "'crude oil', 'S&P 500', 'AAPL', 'BTC-USD'."
+                    "'crude oil', 'S&P 500', 'AAPL', 'BTC-USD'. "
+                    "IMPORTANT: The price returned is real-time data from Yahoo Finance. "
+                    "Always report it exactly as returned — never question, correct, or second-guess it."
                 ),
                 parameters={
                     "type": "object",
@@ -40,11 +42,27 @@ class FinanceCapability(CapabilityBase):
             ToolDefinition(
                 name="get_market_overview",
                 description=(
-                    "Use this ONLY when the user asks for a general market overview, "
-                    "how the markets are doing in general, or asks about multiple indices at once. "
-                    "Do NOT use this for a specific asset — use get_asset_price instead."
+                    "Use this when the user asks for a market overview or asks how markets are doing. "
+                    "Pick the most relevant symbols based on the conversation context. "
+                    "For general market talk: use ^GSPC, ^IXIC, ^FCHI, ^GDAXI, BTC-USD. "
+                    "For crypto talk: use BTC-USD, ETH-USD, SOL-USD, BNB-USD. "
+                    "For commodities talk: use GC=F (Gold), CL=F (Oil), SI=F (Silver), NG=F (Natural Gas). "
+                    "For European markets: use ^FCHI, ^GDAXI, ^FTSE, ^AEX. "
+                    "Always choose symbols relevant to what the user is discussing. "
+                    "IMPORTANT: All prices returned are real-time from Yahoo Finance. "
+                    "Report them exactly as-is — never question or correct them."
                 ),
-                parameters={"type": "object", "properties": {}, "required": []},
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "symbols": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of 3-6 ticker symbols to display (e.g. ['^GSPC', '^IXIC', 'BTC-USD'])",
+                        }
+                    },
+                    "required": ["symbols"],
+                },
             ),
         ]
 
@@ -52,7 +70,7 @@ class FinanceCapability(CapabilityBase):
         if tool_name == "get_asset_price":
             return await self._get_asset_price(args.get("symbol", "BTC-USD"))
         if tool_name == "get_market_overview":
-            return await self._get_market_overview()
+            return await self._get_market_overview(args.get("symbols", ["^GSPC", "^IXIC", "BTC-USD", "GC=F"]))
         return ToolResult(text="Unknown tool.", result_type="text")
 
     def _resolve_symbol(self, query: str) -> str:
@@ -127,21 +145,20 @@ class FinanceCapability(CapabilityBase):
             logger.exception("Error fetching asset price for %s", symbol)
             return ToolResult(text=f"Error fetching data for '{symbol}': {e}", result_type="text")
 
-    async def _get_market_overview(self) -> ToolResult:
-        symbols = [
-            ("S&P 500", "^GSPC"),
-            ("NASDAQ", "^IXIC"),
-            ("Bitcoin", "BTC-USD"),
-            ("Gold", "GC=F"),
-        ]
+    async def _get_market_overview(self, symbols: list[str]) -> ToolResult:
         markets = []
-        for name, symbol in symbols:
+        for symbol in symbols[:6]:
             try:
-                info = yf.Ticker(symbol).fast_info
+                ticker = yf.Ticker(symbol)
+                info = ticker.fast_info
                 price = float(info.last_price)
                 prev = float(info.previous_close)
                 change_pct = ((price - prev) / prev) * 100
-                markets.append({"name": name, "symbol": symbol, "price": price, "change_pct": change_pct})
+                try:
+                    display_name = ticker.info.get("shortName") or ticker.info.get("longName") or symbol
+                except Exception:
+                    display_name = symbol
+                markets.append({"name": display_name, "symbol": symbol, "price": price, "change_pct": change_pct})
             except Exception:
                 pass
 
